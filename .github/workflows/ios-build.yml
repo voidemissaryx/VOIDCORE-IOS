@@ -77,6 +77,28 @@ jobs:
           else:
               raise SystemExit("ERROR: PacketTunnelProvider.swift reference not found.")
 
+          # Fix shared Swift files paths.
+          swift_files = [
+              "VpnConfig.swift",
+              "SharedContainer.swift",
+              "XrayCoreBridge.swift",
+              "XrayCoreProbe.swift",
+          ]
+
+          for filename in swift_files:
+              old_path = f'path = "Runner/{filename}";'
+              new_path = f'path = "{filename}";'
+
+              if old_path in fixed:
+                  fixed = fixed.replace(old_path, new_path, 1)
+                  print(f"Fixed path: {filename}")
+              elif new_path in fixed:
+                  print(f"Path already correct: {filename}")
+              else:
+                  raise SystemExit(
+                      f"ERROR: Could not find file reference for {filename}"
+                  )
+
           # Rebuild the complete Sources build phases section.
           sources_section = """/* Begin PBXSourcesBuildPhase section */
                   A000000076B214DA316909B0 /* Sources */ = {
