@@ -38,6 +38,7 @@ jobs:
 
       - name: Build Xray
         run: |
+          set -euo pipefail
           bash scripts/build_xray_ios.sh
           test -d ios/Frameworks/Xray.xcframework
 
@@ -48,42 +49,12 @@ jobs:
             printf '{"country":"ir","bridges":[]}\n' > assets/tor/bridges.json
           fi
 
-      - name: Check Scheme First Bytes
-        run: |
-          echo "First bytes of Runner.xcscheme:"
-          xxd -l 32 ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
-  
-      - name: Validate Xcode Scheme
+      # IMPORTANT: Repair BEFORE running xcodebuild.
+      - name: Repair Xcode project
+        shell: bash
         run: |
           set -euo pipefail
 
-          SCHEME="ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme"
-
-          echo "Removing BOM and leading whitespace..."
-
-          python3 -c '
-          from pathlib import Path
-
-          path = Path("ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme")
-          content = path.read_bytes()
-          content = content.lstrip(b"\xef\xbb\xbf \t\r\n")
-          path.write_bytes(content)
-          '
-
-          echo "Checking Runner.xcscheme XML..."
-          xmllint --noout "$SCHEME"
-
-          echo "Listing Xcode targets and schemes..."
-          xcodebuild -list -project ios/Runner.xcodeproj
-
-          echo "Checking Runner target ID..."
-          grep -n "A0000000329A555163379275" "$SCHEME"
-
-          echo "Scheme validation completed successfully."
-          
-      - name: Repair Xcode project file
-        shell: bash
-        run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -98,10 +69,86 @@ jobs:
           )
 
           if not match:
-              raise SystemExit("ERROR: Could not find the project rootObject.")
+              raise SystemExit(
+                  "ERROR: Could not find the first complete rootObject block."
+              )
 
           fixed = content[:match.end()] + "\n"
           path.write_text(fixed, encoding="utf-8")
+
+          print("Xcode project repaired successfully.")
+          print(f"Original lines: {len(content.splitlines())}")
+          print(f"Fixed lines: {len(fixed.splitlines())}")
+          PY
+
+      - name: Validate Runner Scheme
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SCHEME="ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme")
+          content = path.read_bytes()
+          content = content.lstrip(b"\xef\xbb\xbf \t\r\n")
+          path.write_bytes(content)
+          PY
+
+          echo "Checking scheme XML..."
+          xmllint --noout "$SCHEME"
+
+          echo "Checking Xcode project..."
+          xcodebuild -list -project ios/Runner.xcodeproj
+
+          echo "Checking Runner target..."
+          grep -n "A0000000329A555163379275" "$SCHEME"
+
+      - name: Build iOS app
+        run: |
+          set -euo pipefail
+          flutter build ios --release --no-codesign
+
+      - name: Package app
+        run: |
+          set -euo pipefail
+
+          VERSION="$(sed -n 's/^version: *\([^+]*\).*/\1/p' pubspec.yaml)"
+
+          mkdir -p dist
+
+          ARCHIVE="VOIDCORE-iOS-${VERSION}-build-${GITHUB_RUN_NUMBER}-unsigned.zip"
+
+          ditto -c -k --keepParent \
+            build/ios/iphoneos/Runner.app "dist/$ARCHIVE"
+
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VOIDCORE-iOS-${{ github.run_number }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-build-${{ github.run_number }}
+          name: VOIDCORE iOS v${{ env.VERSION }} (Build ${{ github.run_number }})
+          target_commitish: ${{ github.sha }}
+          body: |
+            Automated VOIDCORE iOS build.
+
+            Version: ${{ env.VERSION }}
+            Build: ${{ github.run_number }}
+
+            This is an unsigned iOS build.
+          files: dist/*.zip
+          draft: false
+          prerelease: true
 
           print("Xcode project repaired successfully.")
           print(f"Original size: {len(content.splitlines())} lines")
