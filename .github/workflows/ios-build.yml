@@ -151,6 +151,24 @@ jobs:
 
           print("Sources build phase repaired.")
 
+                    # Add the actual iOS Xray framework slice to search paths.
+          old_search_path = '"$(PROJECT_DIR)/Frameworks",'
+          new_search_path = (
+              '"$(PROJECT_DIR)/Frameworks",\n'
+              '                    "$(PROJECT_DIR)/Frameworks/Xray.xcframework/ios-arm64",'
+          )
+
+          count = fixed.count(old_search_path)
+
+          if count == 0:
+              raise SystemExit(
+                  "ERROR: Could not find FRAMEWORK_SEARCH_PATHS."
+              )
+
+          fixed = fixed.replace(old_search_path, new_search_path)
+
+          print(f"Added Xray framework slice to {count} search paths.")
+
           project.write_text(fixed, encoding="utf-8")
           print("Xcode project saved.")
 
