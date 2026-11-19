@@ -1,6 +1,101 @@
 # Builds the VOIDCORE VPN iOS app and its Packet Tunnel Extension on a macOS
 # runner. Produces an unsigned .app when no signing credentials are configured,
-# and a signed .ipa when APPLE_SIGNING_* secrets are present.
+# and a signed .ipa when 
+name: VOIDCORE iOS Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    name: Build VOIDCORE for iOS
+    runs-on: macos-15
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check Xcode
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: xray/go.mod
+          cache: true
+          cache-dependency-path: xray/go.sum
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Show versions
+        run: |
+          go version
+          flutter --version
+          pod --version
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Xray iOS Framework
+        run: |
+          bash scripts/build_xray_ios.sh
+          test -d ios/Frameworks/Xray.xcframework
+
+      - name: Fetch Tor bridges
+        run: |
+          if ! bash scripts/fetch_tor_bridges.sh; then
+            echo "::warning::Could not fetch Tor bridges."
+            mkdir -p assets/tor
+            printf '{"country":"ir","bridges":[]}\n' > assets/tor/bridges.json
+          fi
+
+      - name: Analyze Flutter
+        run: flutter analyze --no-pub
+
+      - name: Run tests
+        run: |
+          if [ -d test ]; then
+            flutter test --no-pub
+          else
+            echo "No test directory found. Skipping."
+          fi
+
+      - name: Build iOS
+        run: flutter build ios --release --no-codesign
+
+      - name: Package application
+        run: |
+          test -d build/ios/iphoneos/Runner.app
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/ios/iphoneos/Runner.app \
+            VOIDCORE-iOS-unsigned.zip
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: VOIDCORE-iOS-unsigned-${{ github.run_number }}
+          path: VOIDCORE-iOS-unsigned.zip
+          if-no-files-found: error
+          retention-days: 14
+* secrets are present.
 #
 # Trigger:
 #   - On every push to main, on PRs to main (analyze + build, no signing).
