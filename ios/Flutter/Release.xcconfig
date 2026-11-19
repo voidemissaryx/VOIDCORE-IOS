@@ -1,6 +1,8 @@
 #include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
 #include? "Runner.local.xcconfig"
 #include "Runner.xcconfig"
+#include "Generated.xcconfig"
 
 IPHONEOS_DEPLOYMENT_TARGET = 16.0
 SWIFT_VERSION = 5.0
+
