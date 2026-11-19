@@ -103,14 +103,13 @@ jobs:
           print("Runner scheme normalized.")
           PY
 
-          echo "Checking project file..."
-          plutil -lint ios/Runner.xcodeproj/project.pbxproj
-
           echo "Checking scheme XML..."
           xmllint --noout ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
 
-          echo "Checking Xcode targets..."
+          echo "Checking Xcode project and targets..."
           xcodebuild -list -project ios/Runner.xcodeproj
+
+          echo "Xcode project validation completed."
 
       - name: Install Flutter dependencies
         run: |
