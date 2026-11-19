@@ -1,0 +1,6 @@
+// Release.xcconfig
+#include? "Runner.local.xcconfig"
+#include "Runner.xcconfig"
+
+IPHONEOS_DEPLOYMENT_TARGET = 16.0
+SWIFT_VERSION = 5.0

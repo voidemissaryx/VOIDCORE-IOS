@@ -1,0 +1,23 @@
+// Runner.xcconfig
+//
+// Common build settings for VOIDCORE-iOS. Overridable from the environment
+// (CI) or from a local override file (see Runner.local.xcconfig).
+
+// The App Group identifier shared between the Runner and the PacketTunnel
+// extension. Must match the App Group you registered in the Apple Developer
+// portal and added to both targets' entitlements.
+APP_GROUP_IDENTIFIER = group.com.bpb.voidcore
+
+// The app's bundle identifier. The PacketTunnel extension appends
+// ".PacketTunnel" automatically in its build settings.
+APP_BUNDLE_IDENTIFIER = com.bpb.voidcore
+
+// Your Apple Developer Team ID. Leave empty for unsigned local builds; CI sets
+// this from the DEVELOPMENT_TEAM secret.
+DEVELOPMENT_TEAM =
+
+// Flutter build variables, injected by `flutter build ios` and the CI workflow.
+// These fall back to sane defaults when Flutter isn't driving the build.
+FLUTTER_BUILD_NAME = 1.3.1
+FLUTTER_BUILD_NUMBER = 3
+FLUTTER_ROOT = /opt/homebrew/Caskroom/flutter/stable

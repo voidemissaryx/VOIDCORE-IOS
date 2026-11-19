@@ -1,0 +1,10 @@
+// Debug.xcconfig
+#include? "Runner.local.xcconfig"
+#include "Runner.xcconfig"
+
+// iOS 16 is the minimum target: it is the oldest version current Flutter
+// (3.32+) supports and gives us the modern NetworkExtension API surface
+// (NEPacketTunnelProvider has been stable for years; iOS 16+ also unlocks
+// the BGTaskScheduler we use for background refreshes).
+IPHONEOS_DEPLOYMENT_TARGET = 16.0
+SWIFT_VERSION = 5.0
