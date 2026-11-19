@@ -22,7 +22,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let tunIPv6 = "fd66:b9b:10:14::1"
     private static let tunDNS = "10.10.14.2"
     /// The local SOCKS/HTTP proxy port Xray listens on for proxy-only mode.
-    private static let localProxyPort: NWEndpoint.Port = 10808
+    private static let localProxyPort: UInt16 = 10808
 
     // MARK: - State
 
@@ -129,7 +129,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             // so apps that honor the system proxy use it transparently.
             let proxy = NEProxySettings()
             proxy.httpEnabled = true
-            proxy.httpServer = NEProxyServer(address: "127.0.0.1", port: Int(PacketTunnelProvider.localProxyPort.value))
+            proxy.httpServer = NEProxyServer(address: "127.0.0.1", port: Int(PacketTunnelProvider.localProxyPort))
             proxy.httpsEnabled = true
             proxy.httpsServer = proxy.httpServer
             settings.proxySettings = proxy
@@ -223,7 +223,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// pump runs whether or not the framework is linked, so the structure is
     /// correct even before the binary is dropped in.
     private func startPacketPump() {
-        guard let flow = packetFlow else { return }
+        let flow = packetFlow
         workQueue.async { [weak self] in
             // Xray's iOS binding reads from packetFlow through a callback we
             // register. The framework's `XrayStart` for iOS wires a dispatch
