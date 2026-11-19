@@ -246,10 +246,28 @@ jobs:
           echo "Xcode project validation completed."
 
       - name: Install Flutter dependencies
+        shell: bash
         run: |
           set -euo pipefail
+
           flutter --version
           flutter pub get
+
+          echo "Checking Flutter iOS configuration..."
+
+          test -f ios/Flutter/Debug.xcconfig
+          test -f ios/Flutter/Release.xcconfig
+
+          echo "Checking Generated.xcconfig..."
+
+          if [ ! -f ios/Flutter/Generated.xcconfig ]; then
+            echo "ERROR: Generated.xcconfig was not generated."
+            exit 1
+          fi
+
+          grep -E 'FLUTTER_ROOT=' ios/Flutter/Generated.xcconfig
+
+          echo "Flutter configuration verified."
 
       - name: Build Xray framework
         shell: bash
@@ -291,8 +309,13 @@ jobs:
           test -f assets/tor/bridges.json
 
       - name: Build iOS Release
+        shell: bash
         run: |
           set -euo pipefail
+
+          cd ios
+          pod install --repo-update
+          cd ..
 
           flutter build ios --release --no-codesign
 
