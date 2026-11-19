@@ -8,11 +8,15 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: voidcore-ios-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-ios:
-    name: Build VOIDCORE iOS
+    name: Build VOIDCORE for iOS
     runs-on: macos-15
     timeout-minutes: 120
 
@@ -34,20 +38,50 @@ jobs:
         run: flutter pub get
 
       - name: Build Xray
-        run: bash scripts/build_xray_ios.sh
+        run: |
+          bash scripts/build_xray_ios.sh
+          test -d ios/Frameworks/Xray.xcframework
 
       - name: Fetch Tor bridges
         run: |
           if ! bash scripts/fetch_tor_bridges.sh; then
             mkdir -p assets/tor
-            echo '{"country":"ir","bridges":[]}' > assets/tor/bridges.json
+            printf '{"country":"ir","bridges":[]}\n' > assets/tor/bridges.json
           fi
 
       - name: Build iOS
         run: flutter build ios --release --no-codesign
 
-      - name: Upload build
+      - name: Package app
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/^version: *\([^+]*\).*/\1/p' pubspec.yaml)"
+          mkdir -p dist
+          ARCHIVE="VOIDCORE-iOS-${VERSION}-build-${GITHUB_RUN_NUMBER}-unsigned.zip"
+          ditto -c -k --keepParent \
+            build/ios/iphoneos/Runner.app "dist/$ARCHIVE"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VOIDCORE-iOS
-          path: build/ios/iphoneos/Runner.app
+          name: VOIDCORE-iOS-${{ github.run_number }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-build-${{ github.run_number }}
+          name: VOIDCORE iOS v${{ env.VERSION }} (Build ${{ github.run_number }})
+          target_commitish: ${{ github.sha }}
+          body: |
+            Automated VOIDCORE iOS build.
+
+            Version: ${{ env.VERSION }}
+            Build: ${{ github.run_number }}
+
+            This is an unsigned iOS build.
+          files: dist/*.zip
+          draft: false
+          prerelease: true
