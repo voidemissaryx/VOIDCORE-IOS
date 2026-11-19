@@ -49,6 +49,23 @@ jobs:
             printf '{"country":"ir","bridges":[]}\n' > assets/tor/bridges.json
           fi
 
+
+      - name: Validate Xcode Scheme
+        run: |
+          set -euo pipefail
+
+          echo "Checking Runner.xcscheme XML..."
+          xmllint --noout ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
+
+          echo "Listing Xcode targets and schemes..."
+          xcodebuild -list -project ios/Runner.xcodeproj
+
+          echo "Checking Runner target ID..."
+          grep -n "A0000000329A555163379275" ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
+
+          echo "Checking PacketTunnel target ID..."
+          grep -n "A000000040A7B40E7E2BCA5C" ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
+
       - name: Build iOS
         run: flutter build ios --release --no-codesign
 
