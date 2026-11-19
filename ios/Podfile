@@ -1,23 +1,52 @@
-// Podfile
-//
-// CocoaPods dependencies for VOIDCORE-iOS. The Packet Tunnel Extension needs
-// its own podfile target so it gets the NetworkExtension framework link.
-// `flutter build ios` runs `pod install` automatically; this file is here for
-// standalone xcodebuild and for the GitHub Actions workflow.
 
 platform :ios, '16.0'
-use_frameworks!
 
-# When Flutter drives the build, it injects its own pod dependencies via the
-# Generated.xcconfig. The targets below declare only the native pods we add on
-# top: none right now (the Xray core ships as an .xcframework linked directly
-# in the project, not through CocoaPods).
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(
+    File.join('..', 'Flutter', 'Generated.xcconfig'),
+    __FILE__
+  )
+
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "#{generated_xcode_build_settings_path} must exist. Run flutter pub get first."
+  end
+
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
+  end
+
+  raise "FLUTTER_ROOT not found in Generated.xcconfig"
+end
+
+require File.expand_path(
+  File.join('packages', 'flutter_tools', 'bin', 'podhelper'),
+  flutter_root
+)
+
+flutter_ios_podfile_setup
 
 target 'Runner' do
-  # The Flutter plugins are added here by `flutter pub get` -> pod install.
+  use_frameworks!
+  use_modular_headers!
+
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 end
 
 target 'PacketTunnel' do
-  # The extension only needs the NetworkExtension system framework, already
-  # linked through the SDK. No third-party pods.
+  use_frameworks!
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+  end
 end
