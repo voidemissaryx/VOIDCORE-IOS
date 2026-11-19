@@ -12,7 +12,6 @@ permissions:
 concurrency:
   group: voidcore-ios-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
   build-ios:
     name: Build VOIDCORE for iOS
@@ -77,27 +76,54 @@ jobs:
           else:
               raise SystemExit("ERROR: PacketTunnelProvider.swift reference not found.")
 
-          # Fix shared Swift files paths.
-          swift_files = [
-              "VpnConfig.swift",
-              "SharedContainer.swift",
-              "XrayCoreBridge.swift",
-              "XrayCoreProbe.swift",
-          ]
+          # Fix all file references inside Runner and PacketTunnel groups.
+          path_fixes = {
+              # Runner group files
+              "Runner/AppDelegate.swift": "AppDelegate.swift",
+              "Runner/VpnController.swift": "VpnController.swift",
+              "Runner/VpnConfig.swift": "VpnConfig.swift",
+              "Runner/SharedContainer.swift": "SharedContainer.swift",
+              "Runner/XrayCoreBridge.swift": "XrayCoreBridge.swift",
+              "Runner/XrayCoreProbe.swift": "XrayCoreProbe.swift",
+              "Runner/AppStatePoller.swift": "AppStatePoller.swift",
+              "Runner/KeychainStore.swift": "KeychainStore.swift",
+              "Runner/DocumentPicker.swift": "DocumentPicker.swift",
+              "Runner/DocumentSaver.swift": "DocumentSaver.swift",
+              "Runner/Info.plist": "Info.plist",
+              "Runner/Runner.entitlements": "Runner.entitlements",
+              "Runner/Debug.entitlements": "Debug.entitlements",
+              "Runner/Release.entitlements": "Release.entitlements",
+              "Runner/Runner-Bridging-Header.h": "Runner-Bridging-Header.h",
+              "Runner/Assets.xcassets": "Assets.xcassets",
 
-          for filename in swift_files:
-              old_path = f'path = "Runner/{filename}";'
-              new_path = f'path = "{filename}";'
+              # Base.lproj group files
+              "Runner/Base.lproj/Main.storyboard": "Main.storyboard",
+              "Runner/Base.lproj/LaunchScreen.storyboard": "LaunchScreen.storyboard",
 
-              if old_path in fixed:
-                  fixed = fixed.replace(old_path, new_path, 1)
-                  print(f"Fixed path: {filename}")
-              elif new_path in fixed:
-                  print(f"Path already correct: {filename}")
+              # PacketTunnel group files
+              "PacketTunnel/Info.plist": "Info.plist",
+              "PacketTunnel/PacketTunnel.entitlements": "PacketTunnel.entitlements",
+          }
+
+          for old_path, new_path in path_fixes.items():
+              old_reference = f'path = "{old_path}";'
+              new_reference = f'path = "{new_path}";'
+
+              if old_reference in fixed:
+                  fixed = fixed.replace(
+                      old_reference,
+                      new_reference,
+                      1
+                  )
+                  print(f"Fixed file reference: {old_path}")
+              elif new_reference in fixed:
+                  print(f"Already correct: {new_path}")
               else:
                   raise SystemExit(
-                      f"ERROR: Could not find file reference for {filename}"
+                      f"ERROR: File reference not found: {old_path}"
                   )
+
+          print("All Runner and PacketTunnel file paths repaired.")
 
           # Rebuild the complete Sources build phases section.
           sources_section = """/* Begin PBXSourcesBuildPhase section */
