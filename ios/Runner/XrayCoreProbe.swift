@@ -28,8 +28,9 @@ private typealias XrayInitEnvFn = @convention(c) (UnsafePointer<CChar>?) -> Void
 private typealias XrayStartEchGatewayFn = @convention(c) () -> UnsafePointer<CChar>?
 private typealias XrayCheckDNSFn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
 private typealias XrayNewControllerFn = @convention(c) () -> OpaquePointer?
-private typealias XrayStartFn = @convention(c) (OpaquePointer, UnsafePointer<CChar>?, Int32, AutoreleasingUnsafeMutablePointer<NSError?>?) -> Void
-private typealias XrayStopFn = @convention(c) (OpaquePointer, AutoreleasingUnsafeMutablePointer<NSError?>?) -> Void
+private typealias XrayStartFn = @convention(c) (OpaquePointer, UnsafePointer<CChar>?, Int32, UnsafeMutablePointer<NSError?>?) -> Void
+
+private typealias XrayStopFn = @convention(c) (OpaquePointer, UnsafeMutablePointer<NSError?>?) -> Void
 private typealias XrayIsRunningFn = @convention(c) (OpaquePointer) -> Bool
 private typealias XrayOutboundTrafficFn = @convention(c) (OpaquePointer) -> UnsafePointer<CChar>?
 private typealias XrayMeasureDelayFn = @convention(c) (UnsafePointer<CChar>?, OpaquePointer) -> Int64
