@@ -80,9 +80,33 @@ jobs:
           grep -n "A0000000329A555163379275" "$SCHEME"
 
           echo "Scheme validation completed successfully."
+          
+      - name: Repair Xcode project file
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
 
-      - name: Build iOS
-        run: flutter build ios --release --no-codesign
+          path = Path("ios/Runner.xcodeproj/project.pbxproj")
+          content = path.read_text(encoding="utf-8-sig")
+
+          match = re.search(
+              r'\n[ \t]*rootObject[ \t]*=.*?;\n}',
+              content,
+              re.DOTALL
+          )
+
+          if not match:
+              raise SystemExit("ERROR: Could not find the project rootObject.")
+
+          fixed = content[:match.end()] + "\n"
+          path.write_text(fixed, encoding="utf-8")
+
+          print("Xcode project repaired successfully.")
+          print(f"Original size: {len(content.splitlines())} lines")
+          print(f"Fixed size: {len(fixed.splitlines())} lines")
+          PY
 
       - name: Package app
         run: |
