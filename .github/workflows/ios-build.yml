@@ -1,359 +1,53 @@
-# Builds the VOIDCORE VPN iOS app and its Packet Tunnel Extension on a macOS
-# runner. Produces an unsigned .app when no signing credentials are configured,
-# and a signed .ipa when 
+
 name: VOIDCORE iOS Build
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
 
-concurrency:
-  group: ios-build-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build-ios:
-    name: Build VOIDCORE for iOS
+    name: Build VOIDCORE iOS
     runs-on: macos-15
     timeout-minutes: 120
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Check Xcode
-        run: |
-          xcodebuild -version
-          xcrun --sdk iphoneos --show-sdk-version
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version-file: xray/go.mod
-          cache: true
-          cache-dependency-path: xray/go.sum
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          cache: true
-
-      - name: Show versions
-        run: |
-          go version
-          flutter --version
-          pod --version
 
       - name: Install dependencies
         run: flutter pub get
 
-      - name: Build Xray iOS Framework
-        run: |
-          bash scripts/build_xray_ios.sh
-          test -d ios/Frameworks/Xray.xcframework
+      - name: Build Xray
+        run: bash scripts/build_xray_ios.sh
 
       - name: Fetch Tor bridges
         run: |
           if ! bash scripts/fetch_tor_bridges.sh; then
-            echo "::warning::Could not fetch Tor bridges."
             mkdir -p assets/tor
-            printf '{"country":"ir","bridges":[]}\n' > assets/tor/bridges.json
-          fi
-
-      - name: Analyze Flutter
-        run: flutter analyze --no-pub
-
-      - name: Run tests
-        run: |
-          if [ -d test ]; then
-            flutter test --no-pub
-          else
-            echo "No test directory found. Skipping."
+            echo '{"country":"ir","bridges":[]}' > assets/tor/bridges.json
           fi
 
       - name: Build iOS
         run: flutter build ios --release --no-codesign
 
-      - name: Package application
-        run: |
-          test -d build/ios/iphoneos/Runner.app
-          ditto -c -k --sequesterRsrc --keepParent \
-            build/ios/iphoneos/Runner.app \
-            VOIDCORE-iOS-unsigned.zip
-
       - name: Upload build
         uses: actions/upload-artifact@v4
         with:
-          name: VOIDCORE-iOS-unsigned-${{ github.run_number }}
-          path: VOIDCORE-iOS-unsigned.zip
-          if-no-files-found: error
-          retention-days: 14
-* secrets are present.
-#
-# Trigger:
-#   - On every push to main, on PRs to main (analyze + build, no signing).
-#   - Manually via workflow_dispatch with a `sign` toggle.
-#   - On tag v* (creates a GitHub Release with the signed IPA).
-name: iOS Build
-
-on:
-  push:
-    branches: [main]
-    tags: ['v*']
-  pull_request:
-    branches: [main]
-  workflow_dispatch:
-    inputs:
-      sign:
-        description: 'Produce a signed IPA (requires signing secrets)'
-        type: boolean
-        default: false
-
-permissions:
-  contents: write
-
-jobs:
-  ios:
-    runs-on: macos-15
-    env:
-      APP_BUNDLE_IDENTIFIER: com.bpb.voidcore
-      APP_GROUP_IDENTIFIER: group.com.bpb.voidcore
-      # Default to no team; CI signing requires the DEVELOPMENT_TEAM secret.
-      DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
-      FLUTTER_BUILD_NAME: 1.3.1
-      FLUTTER_BUILD_NUMBER: '3'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Read version from pubspec.yaml
-        run: |
-          version=$(sed -n 's/^version: *\([^+]*\).*/\1/p' pubspec.yaml)
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            tag="${GITHUB_REF_NAME#v}"
-            if [ "$tag" != "$version" ]; then
-              echo "::error::Tag v$tag doesn't match pubspec.yaml's version $version"
-              exit 1
-            fi
-          fi
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: stable
-          cache: false
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.32.0'
-          channel: stable
-          cache: true
-
-      - name: Select Xcode
-        run: |
-          sudo xcode-select -s /Applications/Xcode_*.app
-          xcodebuild -version
-
-      - name: Flutter dependency resolution
-        run: flutter pub get --enforce-lockfile
-
-      - name: Validate scanner CIDRs (Go test in scanner/)
-        working-directory: scanner
-        run: go run ./cmd/normalize_scanner_cidrs --check ../assets/scanner
-
-      - name: Flutter static analysis
-        run: flutter analyze --no-fatal-infos
-
-      - name: Flutter unit tests
-        run: flutter test --no-pub
-
-      - name: Build Xray.xcframework (gomobile bind for iOS)
-        run: bash scripts/build_xray_ios.sh
-
-      - name: Free Go build cache before iOS packaging
-        run: |
-          go clean -cache -modcache
-          df -h /
-
-      - name: Routing data (geoip.dat, geosite.dat)
-        run: bash scripts/fetch_geo.sh
-        continue-on-error: true
-
-      - name: Minify Cloudflare worker
-        working-directory: worker
-        run: |
-          npm install --no-package-lock --no-audit --no-fund
-          npm run minify
-
-      - name: Tor bridges for the setup wizard
-        run: bash scripts/fetch_tor_bridges.sh
-        continue-on-error: true
-
-      - name: Validate iOS project structure
-        run: |
-          set -e
-          # Verify the project loads and lists both targets.
-          xcodebuild -list -project ios/Runner.xcodeproj | tee /tmp/xcode-list.txt
-          grep -q 'Runner' /tmp/xcode-list.txt
-          grep -q 'PacketTunnel' /tmp/xcode-list.txt
-
-      - name: Build Packet Tunnel Extension (no codesign)
-        run: |
-          xcodebuild build \
-            -project ios/Runner.xcodeproj \
-            -target PacketTunnel \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build/ios-derived \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            APP_BUNDLE_IDENTIFIER="${APP_BUNDLE_IDENTIFIER}" \
-            APP_GROUP_IDENTIFIER="${APP_GROUP_IDENTIFIER}"
-
-      - name: Build the iOS app (no codesign)
-        run: |
-          flutter build ios --release --no-codesign \
-            --build-name="$VERSION" --build-number="$FLUTTER_BUILD_NUMBER"
-
-      - name: Locate the built .app
-        id: app
-        run: |
-          app_path="$(find build/ios/iphoneos -maxdepth 1 -name '*.app' | head -n1)"
-          echo "app_path=$app_path" >> "$GITHUB_OUTPUT"
-          test -n "$app_path"
-
-      - name: Archive unsigned .app into ZIP
-        if: ${{ !inputs.sign && github.ref_type != 'tag' }}
-        run: |
-          mkdir -p dist
-          cd "$(dirname '${{ steps.app.outputs.app_path }}')"
-          ditto -c -k --keepParent "$(basename '${{ steps.app.outputs.app_path }}')" \
-            "$GITHUB_WORKSPACE/dist/voidcore-$VERSION-unsigned.zip"
-
-      - name: Set up signing (when secrets are present)
-        id: signing
-        if: ${{ inputs.sign == true || github.ref_type == 'tag' }}
-        env:
-          P12_BASE64: ${{ secrets.APPLE_P12_BASE64 }}
-          P12_PASSWORD: ${{ secrets.APPLE_P12_PASSWORD }}
-          PROVISION_PROFILE_BASE64: ${{ secrets.APPLE_PROVISION_PROFILE_BASE64 }}
-          PROVISION_PROFILE_EXT_BASE64: ${{ secrets.APPLE_PROVISION_PROFILE_EXT_BASE64 }}
-        run: |
-          set -euo pipefail
-          if [ -z "$P12_BASE64" ] || [ -z "$P12_PASSWORD" ] || \
-             [ -z "$PROVISION_PROFILE_BASE64" ] || [ -z "$PROVISION_PROFILE_EXT_BASE64" ]; then
-            echo "::notice::Signing secrets missing — producing unsigned build."
-            echo "signed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Import the signing certificate into a temporary keychain.
-          KEYCHAIN=voidcore-build.keychain
-          KEYCHAIN_PASSWORD="$(openssl rand -hex 16)"
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          security set-keychain-settings -t 3600 -u "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-
-          P12_PATH="$RUNNER_TEMP/voidcore.p12"
-          echo "$P12_BASE64" | base64 --decode > "$P12_PATH"
-          security import "$P12_PATH" -P "$P12_PASSWORD" -k "$KEYCHAIN" -T /usr/bin/codesign -f
-          security list-keychains -d user -s "$KEYCHAIN" login.keychain
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-
-          # Drop provisioning profiles where Xcode expects them.
-          PP_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
-          mkdir -p "$PP_DIR"
-          echo "$PROVISION_PROFILE_BASE64" | base64 --decode > "$PP_DIR/Runner.mobileprovision"
-          echo "$PROVISION_PROFILE_EXT_BASE64" | base64 --decode > "$PP_DIR/PacketTunnel.mobileprovision"
-
-          echo "signed=true" >> "$GITHUB_OUTPUT"
-
-      - name: Build signed IPA
-        if: ${{ steps.signing.outputs.signed == 'true' }}
-        run: |
-          flutter build ipa --release --no-codesign \
-            --build-name="$VERSION" --build-number="$FLUTTER_BUILD_NUMBER" || true
-
-          # Fallback to direct xcodebuild archive + export if flutter ipa
-          # can't see the signing identities.
-          if [ ! -d "build/ios/ipa" ]; then
-            xcodebuild archive \
-              -project ios/Runner.xcodeproj \
-              -scheme Runner \
-              -configuration Release \
-              -archivePath build/ios/Runner.xcarchive \
-              -sdk iphoneos \
-              APP_BUNDLE_IDENTIFIER="${APP_BUNDLE_IDENTIFIER}" \
-              APP_GROUP_IDENTIFIER="${APP_GROUP_IDENTIFIER}" \
-              DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}"
-
-            cat > build/ios/ExportOptions.plist <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key><string>app-store</string>
-            <key>teamID</key><string>${DEVELOPMENT_TEAM}</string>
-            <key>uploadBitcode</key><false/>
-            <key>uploadSymbols</key><false/>
-          </dict>
-          </plist>
-          EOF
-            xcodebuild -exportArchive \
-              -archivePath build/ios/Runner.xcarchive \
-              -exportOptionsPlist build/ios/ExportOptions.plist \
-              -exportPath build/ios/ipa
-          fi
-
-          mkdir -p dist
-          cp build/ios/ipa/*.ipa "dist/voidcore-$VERSION.ipa"
-
-      - name: Generate SHA-256 checksums
-        if: ${{ always() }}
-        run: |
-          if compgen -G "dist/*" > /dev/null; then
-            (cd dist && shasum -a 256 * > SHA256SUMS)
-          fi
-
-      - name: Upload artifacts
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: voidcore-ios-${{ env.VERSION }}
-          path: dist/*
-          if-no-files-found: warn
-
-      - name: Attach to Release
-        if: ${{ startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.signed == 'true' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ env.VERSION }}
-          name: VOIDCORE iOS ${{ env.VERSION }}
-          body_path: RELEASE_NOTES.md
-          files: |
-            dist/*.ipa
-            dist/SHA256SUMS
-
-      - name: Clean up keychain
-        if: ${{ always() }}
-        run: |
-          security delete-keychain voidcore-build.keychain 2>/dev/null || true
-          rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/Runner.mobileprovision" \
-                "$HOME/Library/MobileDevice/Provisioning Profiles/PacketTunnel.mobileprovision" 2>/dev/null || true
+          name: VOIDCORE-iOS
+          path: build/ios/iphoneos/Runner.app
