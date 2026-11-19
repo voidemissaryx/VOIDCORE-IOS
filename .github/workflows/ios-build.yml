@@ -53,6 +53,7 @@ jobs:
           project = Path("ios/Runner.xcodeproj/project.pbxproj")
           content = project.read_text(encoding="utf-8-sig")
 
+          # Remove anything after the root project closing section.
           match = re.search(
               r'\n[ \t]*rootObject[ \t]*=.*?;\n}',
               content,
@@ -60,12 +61,11 @@ jobs:
           )
 
           if not match:
-              raise SystemExit(
-                  "ERROR: Could not find a complete Xcode project rootObject."
-              )
+              raise SystemExit("ERROR: Could not find rootObject.")
 
           fixed = content[:match.end()] + "\n"
 
+          # Fix PacketTunnelProvider.swift path.
           wrong_path = 'path = "PacketTunnel/PacketTunnelProvider.swift";'
           correct_path = 'path = "PacketTunnelProvider.swift";'
 
@@ -75,20 +75,67 @@ jobs:
           elif correct_path in fixed:
               print("PacketTunnelProvider.swift path is already correct.")
           else:
-              raise SystemExit(
-                  "ERROR: PacketTunnelProvider.swift reference was not found."
-              )
+              raise SystemExit("ERROR: PacketTunnelProvider.swift reference not found.")
+
+          # Rebuild the complete Sources build phases section.
+          sources_section = """/* Begin PBXSourcesBuildPhase section */
+                  A000000076B214DA316909B0 /* Sources */ = {
+                          isa = PBXSourcesBuildPhase;
+                          buildActionMask = 2147483647;
+                          files = (
+                                  A0000000141EF5E307D70344 /* AppDelegate.swift in Sources */,
+                                  A000000009867EDD25086162 /* VpnController.swift in Sources */,
+                                  A000000005DB204CE76B7141 /* VpnConfig.swift in Sources */,
+                                  A000000074C3AE40F4786CA7 /* SharedContainer.swift in Sources */,
+                                  A00000004B5835A5373BEBC2 /* XrayCoreBridge.swift in Sources */,
+                                  A00000000037005F6264576E /* XrayCoreProbe.swift in Sources */,
+                                  A00000005B40D9EDC7C0E816 /* AppStatePoller.swift in Sources */,
+                                  A00000000BAB8D0FD2C5E57F /* KeychainStore.swift in Sources */,
+                                  A000000067C48C1B326E8A2B /* DocumentPicker.swift in Sources */,
+                                  A0000000607330DE23ECF6F1 /* DocumentSaver.swift in Sources */,
+                          );
+                          runOnlyForDeploymentPostprocessing = 0;
+                  };
+                  A0000000344123F412D6C744 /* Sources */ = {
+                          isa = PBXSourcesBuildPhase;
+                          buildActionMask = 2147483647;
+                          files = (
+                                  A0000000635AE671217C7351 /* PacketTunnelProvider.swift in Sources */,
+                                  B20000000000000000000001 /* VpnConfig.swift in PacketTunnel Sources */,
+                                  B20000000000000000000002 /* SharedContainer.swift in PacketTunnel Sources */,
+                                  B20000000000000000000003 /* XrayCoreBridge.swift in PacketTunnel Sources */,
+                                  B20000000000000000000004 /* XrayCoreProbe.swift in PacketTunnel Sources */,
+                          );
+                          runOnlyForDeploymentPostprocessing = 0;
+                  };
+          /* End PBXSourcesBuildPhase section */"""
+
+          pattern = (
+              r'/\* Begin PBXSourcesBuildPhase section \*/'
+              r'.*?'
+              r'/\* End PBXSourcesBuildPhase section \*/'
+          )
+
+          fixed, replacements = re.subn(
+              pattern,
+              lambda _: sources_section,
+              fixed,
+              count=1,
+              flags=re.DOTALL
+          )
+
+          if replacements != 1:
+              raise SystemExit("ERROR: Could not repair Sources build phase.")
+
+          print("Sources build phase repaired.")
 
           project.write_text(fixed, encoding="utf-8")
-
-          print("Xcode project repaired.")
-          print(f"Project lines: {len(fixed.splitlines())}")
+          print("Xcode project saved.")
 
           provider = Path("ios/PacketTunnel/PacketTunnelProvider.swift")
+
           if not provider.is_file():
-              raise SystemExit(
-                  "ERROR: Actual PacketTunnelProvider.swift file is missing."
-              )
+              raise SystemExit("ERROR: PacketTunnelProvider.swift is missing.")
 
           print("PacketTunnelProvider.swift exists.")
 
@@ -106,7 +153,7 @@ jobs:
           echo "Checking scheme XML..."
           xmllint --noout ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
 
-          echo "Checking Xcode project and targets..."
+          echo "Checking Xcode project..."
           xcodebuild -list -project ios/Runner.xcodeproj
 
           echo "Xcode project validation completed."
