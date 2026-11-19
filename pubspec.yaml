@@ -24,20 +24,19 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^6.0.0
 
+
 flutter:
+  config:
+    enable-swift-package-manager: false
+
   uses-material-design: true
   assets:
-    # Minified worker uploaded to Cloudflare when the app deploys. Source: worker/worker.js
+    # Minified worker uploaded to Cloudflare when the app deploys.
     - worker/worker.min.js
-    # Shown in Settings → About → License.
+    # License
     - LICENSE
-    # The status bar icon (android/…/drawable-*/ic_stat_vpn.png), for the home page title;
-    # the 1.5x–4.0x folders hold the denser copies.
     - assets/icons/ic_stat_vpn.png
-    # Tor bridges for the setup wizard's "Retry with Tor": bridges.json, written at build time by
-    # scripts/fetch_tor_bridges.sh (required before building).
     - assets/tor/
-    # Cloudflare scanner CIDRs.
     - assets/scanner/
     - assets/dns/
   fonts:
