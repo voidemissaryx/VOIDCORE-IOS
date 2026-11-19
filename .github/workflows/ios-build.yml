@@ -216,6 +216,38 @@ jobs:
           else:
               print("-lresolv is already configured.")
 
+
+          # Fix Runner target base configuration references.
+          # Debug and Release must use their Flutter xcconfig files,
+          # not their code-signing entitlement files.
+
+          configuration_fixes = {
+              'baseConfigurationReference = A00000005722C96E98EF152C /* Debug.entitlements */;':
+              'baseConfigurationReference = B10000000000000000000001 /* Debug.xcconfig */;',
+
+              'baseConfigurationReference = A00000000CA5219A325E2070 /* Release.entitlements */;':
+              'baseConfigurationReference = B10000000000000000000002 /* Release.xcconfig */;',
+          }
+
+          for old_reference, new_reference in configuration_fixes.items():
+              count = fixed.count(old_reference)
+
+              if count != 1:
+                  raise SystemExit(
+                      f"ERROR: Expected exactly one occurrence of: {old_reference} "
+                      f"but found {count}"
+                  )
+
+              fixed = fixed.replace(
+                  old_reference,
+                  new_reference,
+                  1
+              )
+
+              print(f"Fixed Xcode configuration: {new_reference}")
+
+          print("Runner Debug and Release configurations verified.")
+
           project.write_text(fixed, encoding="utf-8")
           print("Xcode project saved.")
 
