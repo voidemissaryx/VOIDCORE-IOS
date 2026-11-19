@@ -187,11 +187,29 @@ jobs:
           flutter pub get
 
       - name: Build Xray framework
+        shell: bash
         run: |
           set -euo pipefail
-          bash scripts/build_xray_ios.sh
-          test -d ios/Frameworks/Xray.xcframework
-          echo "Xray framework built successfully."
+
+          echo "Building Xray for iOS..."
+          bash scripts/build_xray_ios.sh device
+
+          FRAMEWORK="ios/Frameworks/Xray.xcframework"
+
+          if [ ! -d "$FRAMEWORK" ]; then
+            echo "ERROR: Xray.xcframework was not generated."
+            exit 1
+          fi
+
+          echo "Checking framework contents..."
+          find "$FRAMEWORK" -maxdepth 4 -print
+
+          if [ ! -f "$FRAMEWORK/ios-arm64/Xray.framework/Xray" ]; then
+            echo "ERROR: iOS device Xray binary is missing."
+            exit 1
+          fi
+
+          echo "Xray device framework verified."
 
       - name: Fetch Tor bridges
         shell: bash
