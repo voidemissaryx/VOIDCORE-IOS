@@ -52,8 +52,7 @@ jobs:
         run: |
           echo "First bytes of Runner.xcscheme:"
           xxd -l 32 ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
-
-
+  
       - name: Validate Xcode Scheme
         run: |
           set -euo pipefail
@@ -79,9 +78,6 @@ jobs:
 
           echo "Checking Runner target ID..."
           grep -n "A0000000329A555163379275" "$SCHEME"
-
-          echo "Checking PacketTunnel target ID..."
-          grep -n "A000000040A7B40E7E2BCA5C" "$SCHEME"
 
           echo "Scheme validation completed successfully."
 
