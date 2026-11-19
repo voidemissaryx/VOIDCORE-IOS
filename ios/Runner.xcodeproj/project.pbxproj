@@ -22,6 +22,10 @@
 		A00000003DFD72E0B800F5CC /* PBXBuildFile */ = {isa = PBXBuildFile; fileRef = A000000052E0C28F2547C098 /* A000000052E0C28F2547C098 */; };
 		A0000000635AE671217C7351 /* PBXBuildFile */ = {isa = PBXBuildFile; fileRef = A000000038B0B1D729EC3E75 /* A000000038B0B1D729EC3E75 */; };
 		A0000000223368ABD31F415A /* PacketTunnel.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A00000000D8DBAC111025B16 /* PacketTunnel.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B20000000000000000000001 /* VpnConfig.swift in PacketTunnel Sources */ = {isa = PBXBuildFile; fileRef = A00000003A56E730F04F46E7 /* VpnConfig.swift */; };
+		B20000000000000000000002 /* SharedContainer.swift in PacketTunnel Sources */ = {isa = PBXBuildFile; fileRef = A0000000570A7DC9094EDAE2 /* SharedContainer.swift */; };
+		B20000000000000000000003 /* XrayCoreBridge.swift in PacketTunnel Sources */ = {isa = PBXBuildFile; fileRef = A000000048D334FD5F7AF21A /* XrayCoreBridge.swift */; };
+		B20000000000000000000004 /* XrayCoreProbe.swift in PacketTunnel Sources */ = {isa = PBXBuildFile; fileRef = A00000000AD467D7074C60BD /* XrayCoreProbe.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -240,7 +244,18 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+						A0000000344123F412D6C744 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 				A0000000635AE671217C7351 /* PacketTunnelProvider.swift in Sources */,
+				B20000000000000000000001 /* VpnConfig.swift in PacketTunnel Sources */,
+				B20000000000000000000002 /* SharedContainer.swift in PacketTunnel Sources */,
+				B20000000000000000000003 /* XrayCoreBridge.swift in PacketTunnel Sources */,
+				B20000000000000000000004 /* XrayCoreProbe.swift in PacketTunnel Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
