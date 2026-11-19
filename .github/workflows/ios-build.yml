@@ -49,6 +49,10 @@ jobs:
             printf '{"country":"ir","bridges":[]}\n' > assets/tor/bridges.json
           fi
 
+      - name: Check Scheme First Bytes
+        run: |
+          echo "First bytes of Runner.xcscheme:"
+          xxd -l 32 ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
 
       - name: Validate Xcode Scheme
         run: |
