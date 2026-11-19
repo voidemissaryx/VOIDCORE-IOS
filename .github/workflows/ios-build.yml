@@ -169,6 +169,27 @@ jobs:
 
           print(f"Added Xray framework slice to {count} search paths.")
 
+          # Link libresolv for Xray DNS resolver symbols.
+          if '"-lresolv",' not in fixed:
+              linker_flag = '"-ObjC",'
+              count = fixed.count(linker_flag)
+
+              if count == 0:
+                  raise SystemExit(
+                      "ERROR: Could not find OTHER_LDFLAGS."
+                  )
+
+              fixed = fixed.replace(
+                  linker_flag,
+                  '"-ObjC",\n                    "-lresolv",'
+              )
+
+              print(
+                  f"Added -lresolv to {count} linker configurations."
+              )
+          else:
+              print("-lresolv is already configured.")
+
           project.write_text(fixed, encoding="utf-8")
           print("Xcode project saved.")
 
