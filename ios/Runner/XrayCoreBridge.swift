@@ -99,7 +99,15 @@ final class XrayRuntimeController {
     func measureDelay(url: String) -> Int64 {
         #if canImport(Xray)
         guard let handle = handle else { return -1 }
-        return (try? handle.measureDelay(url)) ?? -1
+        // gomobile exports Go's (int64, error) return as a throwing method
+        // with the first return value written through the ret0_ out parameter.
+        var delay: Int64 = -1
+        do {
+            try handle.measureDelay(url, ret0_: &delay)
+            return delay
+        } catch {
+            return -1
+        }
         #else
         return -1
         #endif
