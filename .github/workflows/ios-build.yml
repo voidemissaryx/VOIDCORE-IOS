@@ -401,6 +401,38 @@ jobs:
             exit 1
           fi
 
+          echo "Disabling code signing for CI unsigned build..."
+          python3 - <<'PY'
+          from pathlib import Path
+
+          project = Path("ios/Runner.xcodeproj/project.pbxproj")
+          content = project.read_text(encoding="utf-8")
+
+          # CI produces an unsigned .app artifact. A real device install still
+          # requires the developer's own Apple Team and provisioning profiles.
+          content = content.replace(
+              'DEVELOPMENT_TEAM = "$(DEVELOPMENT_TEAM)";',
+              'DEVELOPMENT_TEAM = "";'
+          )
+          content = content.replace(
+              'CODE_SIGN_STYLE = Automatic;',
+              'CODE_SIGN_STYLE = Manual;'
+          )
+          content = content.replace(
+              'CODE_SIGN_IDENTITY = "iPhone Developer";',
+              'CODE_SIGN_IDENTITY = "";'
+          )
+
+          # Apply the no-signing overrides to every target/configuration.
+          content = content.replace(
+              'CODE_SIGN_ENTITLEMENTS = ',
+              'CODE_SIGNING_ALLOWED = NO;\\n\\t\\t\\t\\tCODE_SIGNING_REQUIRED = NO;\\n\\t\\t\\t\\tCODE_SIGN_IDENTITY = "";\\n\\t\\t\\t\\tCODE_SIGN_ENTITLEMENTS = '
+          )
+
+          project.write_text(content, encoding="utf-8")
+          print("Unsigned CI signing settings applied to Runner and PacketTunnel.")
+          PY
+
           flutter build ios --release --no-codesign
 
           test -d build/ios/iphoneos/Runner.app
