@@ -10,6 +10,7 @@
 #define Runner_Bridging_Header_h
 
 #import <CommonCrypto/CommonCrypto.h>
+#import "GeneratedPluginRegistrant.h"
 
 // When the Xray.xcframework is linked, its module map is auto-imported by
 // the Swift compiler through the framework search path; no manual import is
