@@ -21,17 +21,16 @@
 #   - XrayNewController() -> *Controller
 #   - (*Controller) Start / Stop / IsRunning / OutboundTraffic / MeasureDelay
 #
-# These are resolved at runtime by ios/Runner/XrayCoreProbe.swift via dlsym,
-# so the app still builds (and runs in a degraded mode) before this script has
-# been run.
+# The Swift bridge imports these generated declarations from the Xray module.
+# Keep the gomobile prefix unset: the Go package is already named "xray", and
+# adding -prefix=Xray duplicates the generated Objective-C/Swift symbol prefix.
 set -euo pipefail
 
 cd "$(dirname "$0")/../xray"
 ROOT_DIR="$(pwd)"
 OUT="../ios/Frameworks/Xray.xcframework"
 
-# gomobile's gobind for iOS produces Swift bindings with a configurable prefix;
-# we use "Xray" so the symbols are XrayVersion, XrayStart, etc.
+# The package name supplies the Xray symbol namespace. Do not add -prefix here.
 export GOBIN="$PWD/.bin"
 export PATH="$GOBIN:$PATH"
 
@@ -53,13 +52,12 @@ esac
 mkdir -p "$(dirname "$OUT")"
 
 # gomobile bind -target=ios produces an .xcframework directly.
-# -prefix=Xray: the Go package name is `xray`; we rename exported symbols to
-#   start with "Xray" to match the dlsym names in XrayCoreProbe.swift.
 # -trimpath -ldflags "-s -w": strip paths and debug info for a smaller binary.
+# Leaving -prefix unset produces the XrayVersion/XrayNewController symbols
+# consumed by ios/Runner/XrayCoreBridge.swift.
 # -checklinkname=0: matches the Android build (anet links into net internals).
 gomobile bind \
   -target="$GO_TARGET" \
-  -prefix=Xray \
   -trimpath \
   -ldflags "-s -w -buildid= -checklinkname=0" \
   -o "$OUT" \
