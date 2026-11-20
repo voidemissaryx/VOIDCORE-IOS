@@ -479,7 +479,7 @@
 					"-ObjC",
 					"-weak_framework", "Xray",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER).PacketTunnel";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bpb.voidcore.PacketTunnel";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.0;
@@ -513,7 +513,7 @@
 					"-ObjC",
 					"-weak_framework", "Xray",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER).PacketTunnel";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bpb.voidcore.PacketTunnel";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.0;
@@ -906,7 +906,7 @@
 					"-ObjC",
 					"-weak_framework", "Xray",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER).PacketTunnel";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bpb.voidcore.PacketTunnel";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.0;
@@ -940,7 +940,7 @@
 					"-ObjC",
 					"-weak_framework", "Xray",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "$(APP_BUNDLE_IDENTIFIER).PacketTunnel";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.bpb.voidcore.PacketTunnel";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.0;
