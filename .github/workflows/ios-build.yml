@@ -145,6 +145,7 @@ jobs:
                                   A00000000BAB8D0FD2C5E57F /* KeychainStore.swift in Sources */,
                                   A000000067C48C1B326E8A2B /* DocumentPicker.swift in Sources */,
                                   A0000000607330DE23ECF6F1 /* DocumentSaver.swift in Sources */,
+                                  B30000000000000000000001 /* GeneratedPluginRegistrant.m in Sources */,
                           );
                           runOnlyForDeploymentPostprocessing = 0;
                   };
