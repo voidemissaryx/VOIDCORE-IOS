@@ -408,32 +408,34 @@ jobs:
           project = Path("ios/Runner.xcodeproj/project.pbxproj")
           content = project.read_text(encoding="utf-8")
 
-          # CI produces an unsigned .app artifact. A real device install still
-          # requires the developer's own Apple Team and provisioning profiles.
-          content = content.replace(
-              'DEVELOPMENT_TEAM = "$(DEVELOPMENT_TEAM)";',
-              'DEVELOPMENT_TEAM = "";'
-          )
-          content = content.replace(
-              'CODE_SIGN_STYLE = Automatic;',
-              'CODE_SIGN_STYLE = Manual;'
-          )
-          content = content.replace(
-              'CODE_SIGN_IDENTITY = "iPhone Developer";',
-              'CODE_SIGN_IDENTITY = "";'
-          )
+          # Keep the pbxproj syntax valid: insert real lines, never escaped
+          # backslash-n sequences. Apply to Runner and PacketTunnel configs.
+          lines = content.splitlines()
+          output = []
+          for line in lines:
+              stripped = line.lstrip()
+              indent = line[:len(line) - len(stripped)]
+              if stripped.startswith("CODE_SIGN_ENTITLEMENTS = "):
+                  output.extend([
+                      indent + "CODE_SIGNING_ALLOWED = NO;",
+                      indent + "CODE_SIGNING_REQUIRED = NO;",
+                      indent + 'CODE_SIGN_IDENTITY = "";',
+                      indent + 'DEVELOPMENT_TEAM = "";',
+                      indent + "CODE_SIGN_STYLE = Manual;",
+                  ])
+              output.append(line)
 
-          # Apply the no-signing overrides to every target/configuration.
-          content = content.replace(
-              'CODE_SIGN_ENTITLEMENTS = ',
-              'CODE_SIGNING_ALLOWED = NO;\\n\\t\\t\\t\\tCODE_SIGNING_REQUIRED = NO;\\n\\t\\t\\t\\tCODE_SIGN_IDENTITY = "";\\n\\t\\t\\t\\tCODE_SIGN_ENTITLEMENTS = '
-          )
+          content = "\n".join(output) + "\n"
+          if "\\\\n" in content:
+              raise SystemExit("ERROR: escaped newline sequence found in project file.")
 
           project.write_text(content, encoding="utf-8")
-          print("Unsigned CI signing settings applied to Runner and PacketTunnel.")
+          print("Unsigned signing settings applied with valid pbxproj formatting.")
           PY
 
-          flutter build ios --release --no-codesign
+          echo "Validating Xcode project after signing changes..."
+          xcodebuild -list -project ios/Runner.xcodeproj
+                    flutter build ios --release --no-codesign
 
           test -d build/ios/iphoneos/Runner.app
 
