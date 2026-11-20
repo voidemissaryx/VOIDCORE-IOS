@@ -96,7 +96,7 @@ class AppDelegate: FlutterAppDelegate {
             handleShareFile(call, result: result)
 
         case "pickFile":
-            handlePickFile(result: result)
+            handlePickFile(result)
 
         case "saveFile":
             handleSaveFile(call, result: result)
@@ -129,7 +129,7 @@ class AppDelegate: FlutterAppDelegate {
             ])
 
         case "measureDelay":
-            handleMeasureDelay(result: result)
+            handleMeasureDelay(result)
 
         case "scannerStart":
             result("Scanner is not available on iOS in this build.")
