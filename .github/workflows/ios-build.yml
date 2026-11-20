@@ -185,6 +185,7 @@ jobs:
           old_search_path = '"$(PROJECT_DIR)/Frameworks",'
           new_search_path = (
               '"$(PROJECT_DIR)/Frameworks",\n'
+              '                    "$(FLUTTER_ROOT)/bin/cache/artifacts/engine/ios",\n'
               '                    "$(PROJECT_DIR)/Frameworks/Xray.xcframework/ios-arm64",'
           )
 
@@ -199,24 +200,30 @@ jobs:
 
           print(f"Added Xray framework slice to {count} search paths.")
 
+          # Link Flutter explicitly because this generated project does not
+          # retain CocoaPods' Flutter framework linkage in its base project file.
+          if '"-framework", "Flutter"' not in fixed:
+              linker_flag = '"-ObjC",'
+              count = fixed.count(linker_flag)
+              if count == 0:
+                  raise SystemExit("ERROR: Could not find OTHER_LDFLAGS.")
+              fixed = fixed.replace(
+                  linker_flag,
+                  '"-ObjC",\n                    "-framework", "Flutter",'
+              )
+              print(f"Added Flutter framework linkage to {count} linker configurations.")
+
           # Link libresolv for Xray DNS resolver symbols.
           if '"-lresolv",' not in fixed:
               linker_flag = '"-ObjC",'
               count = fixed.count(linker_flag)
-
               if count == 0:
-                  raise SystemExit(
-                      "ERROR: Could not find OTHER_LDFLAGS."
-                  )
-
+                  raise SystemExit("ERROR: Could not find OTHER_LDFLAGS.")
               fixed = fixed.replace(
                   linker_flag,
                   '"-ObjC",\n                    "-lresolv",'
               )
-
-              print(
-                  f"Added -lresolv to {count} linker configurations."
-              )
+              print(f"Added -lresolv to {count} linker configurations.")
           else:
               print("-lresolv is already configured.")
 
