@@ -185,7 +185,6 @@ jobs:
           old_search_path = '"$(PROJECT_DIR)/Frameworks",'
           new_search_path = (
               '"$(PROJECT_DIR)/Frameworks",\n'
-              '                    "$(FLUTTER_ROOT)/bin/cache/artifacts/engine/ios",\n'
               '                    "$(PROJECT_DIR)/Frameworks/Xray.xcframework/ios-arm64",'
           )
 
@@ -200,18 +199,9 @@ jobs:
 
           print(f"Added Xray framework slice to {count} search paths.")
 
-          # Link Flutter explicitly because this generated project does not
-          # retain CocoaPods' Flutter framework linkage in its base project file.
-          if '"-framework", "Flutter"' not in fixed:
-              linker_flag = '"-ObjC",'
-              count = fixed.count(linker_flag)
-              if count == 0:
-                  raise SystemExit("ERROR: Could not find OTHER_LDFLAGS.")
-              fixed = fixed.replace(
-                  linker_flag,
-                  '"-ObjC",\n                    "-framework", "Flutter",'
-              )
-              print(f"Added Flutter framework linkage to {count} linker configurations.")
+          # Flutter is provided by the Flutter CocoaPods integration.
+          # Do not inject a global -framework Flutter flag: it also affects
+          # PacketTunnel, which must not link the Flutter engine.
 
           # Link libresolv for Xray DNS resolver symbols.
           if '"-lresolv",' not in fixed:
@@ -356,6 +346,18 @@ jobs:
           cd ios
           pod install --repo-update
           cd ..
+
+          echo "Inspecting Flutter pod integration..."
+          test -f "ios/Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
+          grep -nE 'FRAMEWORK_SEARCH_PATHS|Flutter' \
+            "ios/Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig" || true
+          find "$FLUTTER_ROOT/bin/cache/artifacts/engine/ios" \
+            -maxdepth 4 \( -name Flutter.framework -o -name Flutter.xcframework \) -print
+
+          echo "Resolved Runner release build settings..."
+          xcodebuild -workspace ios/Runner.xcworkspace \
+            -scheme Runner -configuration Release \
+            -showBuildSettings | grep -E '(^| )FRAMEWORK_SEARCH_PATHS =|^ *FLUTTER_ROOT =|^ *PODS_ROOT ='
 
           flutter build ios --release --no-codesign
 
