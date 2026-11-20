@@ -462,17 +462,51 @@ class ChainProxy {
   final String id;
   final String name;
   final String link;
+  final bool favorite;
+  final String? category;
 
-  const ChainProxy({required this.id, required this.name, required this.link});
+  const ChainProxy({
+    required this.id,
+    required this.name,
+    required this.link,
+    this.favorite = false,
+    this.category,
+  });
+
+  ChainProxy copyWith({
+    String? name,
+    String? link,
+    bool? favorite,
+    String? category,
+    bool clearCategory = false,
+  }) => ChainProxy(
+    id: id,
+    name: name ?? this.name,
+    link: link ?? this.link,
+    favorite: favorite ?? this.favorite,
+    category: clearCategory ? null : category ?? this.category,
+  );
 
   static ChainProxy? parse(Object? v) {
     final j = _map(v);
     final id = _strOrNull(j['id']), link = _strOrNull(j['link']);
     if (id == null || link == null) return null;
-    return ChainProxy(id: id, name: _strOrNull(j['name']) ?? id, link: link);
+    return ChainProxy(
+      id: id,
+      name: _strOrNull(j['name']) ?? id,
+      link: link,
+      favorite: _bool(j['favorite'], false),
+      category: _strOrNull(j['category']),
+    );
   }
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'link': link};
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'link': link,
+    'favorite': favorite,
+    if (category != null) 'category': category,
+  };
 }
 
 class EchSettings {
@@ -899,8 +933,8 @@ class Profile {
   final ServerlessSettings serverless;
   final TorSettings tor;
 
-  /// The saved chain proxies (Settings → Chain proxies); which one a connection uses is the
-  /// device's choice (DeviceSettings.exitChains).
+  /// Legacy chain-proxy entries from older settings exports. They are retained only for
+  /// backward-compatible parsing; the current app manages profiles in the V2Ray workspace.
   final List<ChainProxy> chains;
 
   /// Used by Worker's Fragment mode.
@@ -986,8 +1020,7 @@ class Profile {
     ...sparseDiff(toJson(), const Profile().toJson())..remove('schemaVersion'),
   };
 
-  /// For exported files: everything except the private parts, the WARP and MASQUE accounts and
-  /// Tor bridges. Chain proxies are included.
+  /// For exported files: everything except private parts, WARP and MASQUE accounts, and Tor bridges.
   Map<String, dynamic> toExportJson() {
     final json = toSparseJson();
     void drop(String section, String key) {
@@ -1185,7 +1218,7 @@ class DeviceSettings {
     this.exitNodes = const {},
     this.exitChains = const {},
     this.exitRegion = '',
-    this.themeColor = 'blue',
+    this.themeColor = 'purple',
     this.themeMode = 'system',
     this.deployment = '',
     this.setupDone = false,

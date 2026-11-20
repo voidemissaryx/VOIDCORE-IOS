@@ -58,13 +58,12 @@ class ConnectionCard extends StatelessWidget {
               ServerlessMode.domainFronting
           ? [ExitNode.worker, ExitNode.psiphon]
           : [ExitNode.worker, ExitNode.psiphon, ExitNode.tor],
-      // The chain proxy is an exit node once there's one the type can carry (Settings → Chain proxies).
+      // VOIDCORE's home selector intentionally excludes the V2Ray workspace's profiles.
       _ => [
         for (final n in ExitNode.values)
-          if (n != ExitNode.chain || state.usableChains.isNotEmpty) n,
+          if (n != ExitNode.chain) n,
       ],
     };
-    final chain = state.exitChain;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 12),
@@ -110,14 +109,14 @@ class ConnectionCard extends StatelessWidget {
                       label: 'Exit Node',
                       selector: ChipMenu(
                         values: nodes,
-                        selected: exit,
+                        selected: exit == ExitNode.chain ? ExitNode.worker : exit,
                         label: (n) => switch (n) {
                           ExitNode.worker => 'Default',
                           ExitNode.chain => 'Chain proxy',
                           ExitNode.psiphon => 'Psiphon',
                           ExitNode.tor => 'Tor',
                         },
-                        badges: (n) => _transports(n, state.mode, chain: chain),
+                        badges: (n) => _transports(n, state.mode, chain: null),
                         onSelected: state.setExitNode,
                         enabled: !state.isBusy && nodes.length > 1,
                       ),
@@ -139,27 +138,6 @@ class ConnectionCard extends StatelessWidget {
                         label: _regionLabel,
                         onSelected: state.setExitRegion,
                         enabled: !state.isBusy,
-                      ),
-                    )
-                  : const SizedBox(width: double.infinity),
-            ),
-            // The chain proxy this type exits through: names, with their tags in the open menu.
-            AnimatedSize(
-              duration: _rowAnimation,
-              curve: Curves.easeInOut,
-              alignment: Alignment.topCenter,
-              child: exit == ExitNode.chain && chain != null
-                  ? _Row(
-                      icon: Symbols.link_rounded,
-                      label: 'Chain',
-                      selector: ChipMenu(
-                        values: state.usableChains,
-                        selected: chain,
-                        label: (c) => c.name,
-                        subtitleBadges: (c) =>
-                            ChainInfo.of(c.link)?.tags ?? const [],
-                        onSelected: state.setExitChain,
-                        enabled: !state.isBusy && state.usableChains.length > 1,
                       ),
                     )
                   : const SizedBox(width: double.infinity),

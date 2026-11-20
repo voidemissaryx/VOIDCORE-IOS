@@ -2,7 +2,7 @@
 
 **One app. Multiple ways to stay connected.**
 
-This is the iOS/iPadOS port of VOIDCORE VPN 1.3.1. The Flutter UI is shared
+This is the iOS/iPadOS port of VOIDCORE VPN 1.5.7. The Flutter UI is shared
 with the Android build; the native layer is rewritten in Swift on top of
 Apple's Network Extension framework, with the same Xray-core engine
 (gomobile `bind -target=ios`) driving the tunnel.
@@ -12,6 +12,15 @@ Apple's Network Extension framework, with the same Xray-core engine
 > everywhere.
 
 ---
+
+## Flutter features synced from Android 1.5.7
+
+The shared Flutter layer now includes the current configuration manager, V2RayNG
+workspace, Smart Connect UI, connection history and tools, refreshed settings,
+and the latest connection/status cards. The iOS bridge remains implemented in
+Swift; platform-specific capabilities (including Tor/Psiphon exits and
+per-app VPN selection) must be checked against the iOS feature matrix rather
+than assumed to match Android.
 
 ## What's in this repo
 

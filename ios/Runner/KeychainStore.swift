@@ -84,7 +84,7 @@ enum KeychainStore {
 
     /// Wipes every VOIDCORE-stored key. Used when the user resets settings.
     static func wipeAll() {
-        let query: [String: Any] = [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: servicePrefix,
         ]

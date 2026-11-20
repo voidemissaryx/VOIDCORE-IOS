@@ -15,7 +15,10 @@ response=$(curl -fsSL --retry 3 -X POST \
   https://bridges.torproject.org/moat/circumvention/settings)
 
 # Bridge lines hold no quotes: each is a JSON string "<transport> <address> <fingerprint> …".
-mapfile -t bridges < <(grep -oE '"(webtunnel|obfs4|snowflake) [^"]+ [0-9A-F]{40}[^"]*"' <<<"$response" | tr -d '"' | sort -u)
+bridges=()
+while IFS= read -r bridge; do
+  [ -n "$bridge" ] && bridges+=("$bridge")
+done < <(grep -oE '"(webtunnel|obfs4|snowflake) [^"]+ [0-9A-F]{40}[^"]*"' <<<"$response" | tr -d '"' | sort -u)
 # Nothing here prints a bridge: build logs may be public.
 if [ "${#bridges[@]}" -eq 0 ]; then
   echo "No bridges in Tor Project's answer" >&2

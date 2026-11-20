@@ -37,7 +37,8 @@ class _StatusCardState extends State<StatusCard> {
   void initState() {
     super.initState();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted && AppScope.read(context).isConnected) setState(() {});
+      final state = AppScope.read(context);
+      if (mounted && state.isConnected && state.activeV2rayId == null && !state.v2rayConnecting && !state.v2rayDisconnecting && !state.v2raySmartConnecting) setState(() {});
     });
   }
 
@@ -52,9 +53,11 @@ class _StatusCardState extends State<StatusCard> {
     final state = AppScope.of(context);
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final failed =
-        state.status == VpnStatus.disconnected && state.error != null;
-    final (title, subtitle) = switch (state.status) {
+    final v2rayOwnsTunnel = state.activeV2rayId != null || state.v2rayConnecting || state.v2rayDisconnecting || state.v2raySmartConnecting;
+    final homeStatus = v2rayOwnsTunnel ? VpnStatus.disconnected : state.status;
+    final homeConnected = homeStatus == VpnStatus.connected;
+    final failed = homeStatus == VpnStatus.disconnected && !v2rayOwnsTunnel && state.error != null;
+    final (title, subtitle) = switch (homeStatus) {
       // Psiphon / Tor say what they're doing: progress while connecting, or reconnecting.
       VpnStatus.connected => (
         'Connected',
@@ -68,7 +71,7 @@ class _StatusCardState extends State<StatusCard> {
       VpnStatus.disconnected when failed => ('Connection failed', state.error!),
       VpnStatus.disconnected => ('Disconnected', 'Tap to connect'),
     };
-    final titleColor = state.isConnected
+    final titleColor = homeConnected
         ? _green
         : (failed ? scheme.error : scheme.onSurface);
     final muted = scheme.onSurfaceVariant;
@@ -151,11 +154,12 @@ class _Metrics extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    final since = state.connectedAt;
-    final ips = state.myIps;
+    final voidCoreConnected = state.isConnected && state.activeV2rayId == null && !state.v2rayConnecting && !state.v2rayDisconnecting && !state.v2raySmartConnecting;
+    final since = voidCoreConnected ? state.connectedAt : null;
+    final ips = voidCoreConnected ? state.myIps : null;
 
     Widget ip(IpInfo? info) {
-      final text = !state.isConnected
+      final text = !voidCoreConnected
           ? '—'
           : ips == null
           ? (state.loadingIps ? '…' : '—')
@@ -167,7 +171,7 @@ class _Metrics extends StatelessWidget {
       return Text(text, maxLines: 1, overflow: TextOverflow.ellipsis);
     }
 
-    final refreshIps = state.isConnected ? state.refreshMyIps : null;
+    final refreshIps = voidCoreConnected ? state.refreshMyIps : null;
     final twoIps = state.mode.needsWorker && state.exitNode == ExitNode.worker;
     // This phone's LAN address (always shown); with LAN connections allowed, other
     // devices use it with port 10808 for the SOCKS/HTTP proxy.
@@ -194,7 +198,7 @@ class _Metrics extends StatelessWidget {
                 icon: Symbols.timer_rounded,
                 label: 'Duration',
                 value: Text(
-                  state.isConnected && since != null
+                  voidCoreConnected && since != null
                       ? formatDuration(DateTime.now().difference(since))
                       : '—',
                 ),
@@ -204,7 +208,7 @@ class _Metrics extends StatelessWidget {
               child: _Metric(
                 icon: Symbols.speed_rounded,
                 label: 'Ping',
-                value: state.isConnected
+                value: voidCoreConnected
                     ? const _PingButton()
                     : const Text('—'),
               ),
@@ -404,8 +408,10 @@ class _PowerButtonState extends State<_PowerButton> {
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
     final scheme = Theme.of(context).colorScheme;
-    final busy = state.isBusy;
-    final (Color fill, Color iconColor) = switch (state.status) {
+    final v2rayOwnsTunnel = state.activeV2rayId != null || state.v2rayConnecting || state.v2rayDisconnecting || state.v2raySmartConnecting;
+    final homeStatus = v2rayOwnsTunnel ? VpnStatus.disconnected : state.status;
+    final busy = v2rayOwnsTunnel ? (state.v2rayConnecting || state.v2raySmartConnecting) : state.isBusy;
+    final (Color fill, Color iconColor) = switch (homeStatus) {
       VpnStatus.connected => (_green, Colors.white),
       VpnStatus.disconnected => (
         scheme.primaryContainer,
@@ -414,8 +420,8 @@ class _PowerButtonState extends State<_PowerButton> {
       _ => (scheme.primary, scheme.onPrimary),
     };
     final up =
-        state.status == VpnStatus.connected ||
-        state.status == VpnStatus.connecting;
+        homeStatus == VpnStatus.connected ||
+        homeStatus == VpnStatus.connecting;
     if (_up == null) {
       _turns = up ? 0 : 0.5;
     } else if (_up != up) {
@@ -426,7 +432,7 @@ class _PowerButtonState extends State<_PowerButton> {
 
     return Semantics(
       button: true,
-      label: state.status == VpnStatus.disconnected ? 'Connect' : 'Disconnect',
+      label: v2rayOwnsTunnel ? 'VOIDCORE is disconnected' : homeStatus == VpnStatus.disconnected ? 'Connect' : 'Disconnect',
       child: Stack(
         alignment: Alignment.center,
         children: [
@@ -478,7 +484,13 @@ class _PowerButtonState extends State<_PowerButton> {
                 clipBehavior: Clip.antiAlias,
                 child: InkWell(
                   // Always tappable: while connecting (Psiphon may search for a long time) it cancels.
-                  onTap: state.toggle,
+                  // A connection attempt must remain cancellable. Only block taps
+                  // during disconnecting or V2Ray's own transition states.
+                  onTap: busy && homeStatus != VpnStatus.connecting
+                      ? null
+                      : v2rayOwnsTunnel
+                          ? (state.activeV2rayId != null ? state.connect : null)
+                          : state.toggle,
                   onHighlightChanged: (v) => setState(() => _pressed = v),
                   child: Center(
                     child: AnimatedRotation(

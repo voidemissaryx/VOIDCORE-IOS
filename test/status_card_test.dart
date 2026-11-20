@@ -55,7 +55,14 @@ void main() {
       ),
       findsOneWidget,
     );
-    await tester.tap(find.byType(InkWell));
+    final powerButton = find.descendant(
+      of: find.byWidgetPredicate(
+        (widget) => widget is Semantics && widget.properties.label == 'Disconnect',
+      ),
+      matching: find.byType(InkWell),
+    );
+    expect(powerButton, findsOneWidget);
+    await tester.tap(powerButton);
     await tester.pump();
     expect(calls, ['stop']);
     await tester.pumpWidget(const SizedBox.shrink());

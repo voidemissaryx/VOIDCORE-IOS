@@ -96,7 +96,7 @@ class AppDelegate: FlutterAppDelegate {
             handleShareFile(call, result: result)
 
         case "pickFile":
-            handlePickFile(result: result)
+            handlePickFile(result)
 
         case "saveFile":
             handleSaveFile(call, result: result)
@@ -124,12 +124,12 @@ class AppDelegate: FlutterAppDelegate {
 
         case "appInfo":
             result([
-                "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.3.1",
+                "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.5.7",
                 "abis": ["arm64", "arm64e", "x86_64"],
             ])
 
         case "measureDelay":
-            handleMeasureDelay(result: result)
+            handleMeasureDelay(result)
 
         case "scannerStart":
             result("Scanner is not available on iOS in this build.")

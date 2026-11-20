@@ -5,6 +5,10 @@ on:
   push:
     branches:
       - main
+      - "sync/**"
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -141,6 +145,7 @@ jobs:
                                   A00000000BAB8D0FD2C5E57F /* KeychainStore.swift in Sources */,
                                   A000000067C48C1B326E8A2B /* DocumentPicker.swift in Sources */,
                                   A0000000607330DE23ECF6F1 /* DocumentSaver.swift in Sources */,
+                                  B30000000000000000000001 /* GeneratedPluginRegistrant.m in Sources */,
                           );
                           runOnlyForDeploymentPostprocessing = 0;
                   };
@@ -195,24 +200,56 @@ jobs:
 
           print(f"Added Xray framework slice to {count} search paths.")
 
+          # The Flutter pod's xcconfig does not expose the engine XCFramework
+          # directory in FRAMEWORK_SEARCH_PATHS on this generated project.
+          # Add the device slice to Runner only (never to PacketTunnel).
+          runner_config_ids = [
+              "A000000038682949FE1D5078",  # Runner Debug
+              "A00000002EE560E7D7A9794D",  # Runner Release
+          ]
+
+          for config_id in runner_config_ids:
+              marker = f"{config_id} /*"
+              config_start = fixed.find(marker)
+              if config_start < 0:
+                  raise SystemExit(f"ERROR: Runner configuration {config_id} not found.")
+
+              search_start = fixed.find("FRAMEWORK_SEARCH_PATHS = (", config_start)
+              if search_start < 0:
+                  raise SystemExit(f"ERROR: FRAMEWORK_SEARCH_PATHS missing in {config_id}.")
+
+              search_end = fixed.find(");", search_start)
+              if search_end < 0:
+                  raise SystemExit(f"ERROR: FRAMEWORK_SEARCH_PATHS is unterminated in {config_id}.")
+
+              search_block = fixed[search_start:search_end]
+              flutter_path = '"$(FLUTTER_ROOT)/bin/cache/artifacts/engine/ios/Flutter.xcframework/ios-arm64",'
+              if flutter_path not in search_block:
+                  fixed = (
+                      fixed[:search_end]
+                      + '\n                    '
+                      + flutter_path
+                      + fixed[search_end:]
+                  )
+
+
+          print("Added Flutter iOS device framework search path to Runner Debug/Release.")
+
+          # Flutter is provided by the Flutter CocoaPods integration.
+          # Do not inject a global -framework Flutter flag: it also affects
+          # PacketTunnel, which must not link the Flutter engine.
+
           # Link libresolv for Xray DNS resolver symbols.
           if '"-lresolv",' not in fixed:
               linker_flag = '"-ObjC",'
               count = fixed.count(linker_flag)
-
               if count == 0:
-                  raise SystemExit(
-                      "ERROR: Could not find OTHER_LDFLAGS."
-                  )
-
+                  raise SystemExit("ERROR: Could not find OTHER_LDFLAGS.")
               fixed = fixed.replace(
                   linker_flag,
                   '"-ObjC",\n                    "-lresolv",'
               )
-
-              print(
-                  f"Added -lresolv to {count} linker configurations."
-              )
+              print(f"Added -lresolv to {count} linker configurations.")
           else:
               print("-lresolv is already configured.")
 
@@ -232,19 +269,16 @@ jobs:
           for old_reference, new_reference in configuration_fixes.items():
               count = fixed.count(old_reference)
 
-              if count != 1:
+              if count == 1:
+                  fixed = fixed.replace(old_reference, new_reference, 1)
+                  print(f"Fixed Xcode configuration: {new_reference}")
+              elif fixed.count(new_reference) == 1:
+                  print(f"Already correct: {new_reference}")
+              else:
                   raise SystemExit(
-                      f"ERROR: Expected exactly one occurrence of: {old_reference} "
-                      f"but found {count}"
+                      f"ERROR: Expected one old or one corrected Xcode reference; "
+                      f"found old={count}, corrected={fixed.count(new_reference)}"
                   )
-
-              fixed = fixed.replace(
-                  old_reference,
-                  new_reference,
-                  1
-              )
-
-              print(f"Fixed Xcode configuration: {new_reference}")
 
           print("Runner Debug and Release configurations verified.")
 
@@ -349,9 +383,51 @@ jobs:
           pod install --repo-update
           cd ..
 
-          flutter build ios --release --no-codesign
+          echo "Inspecting Flutter pod integration..."
+          test -f "ios/Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
+          grep -nE 'FRAMEWORK_SEARCH_PATHS|Flutter' \
+            "ios/Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig" || true
+          find "$FLUTTER_ROOT/bin/cache/artifacts/engine/ios" \
+            -maxdepth 4 \( -name Flutter.framework -o -name Flutter.xcframework \) -print
 
-          test -d build/ios/iphoneos/Runner.app
+          echo "Resolved Runner release build settings..."
+          BUILD_SETTINGS="$(xcodebuild -workspace ios/Runner.xcworkspace \
+            -scheme Runner -configuration Release \
+            -showBuildSettings)"
+          printf '%s\\n' "$BUILD_SETTINGS" | grep -E '(^| )FRAMEWORK_SEARCH_PATHS =|^ *FLUTTER_ROOT =|^ *PODS_ROOT ='
+
+          if ! printf '%s\\n' "$BUILD_SETTINGS" | grep -Fq 'Flutter.xcframework/ios-arm64'; then
+            echo "ERROR: Runner cannot see the Flutter iOS device framework."
+            exit 1
+          fi
+
+          echo "Validating Xcode project before unsigned build..."
+          xcodebuild -list -project ios/Runner.xcodeproj
+
+          echo "Building Runner directly with Xcode (code signing disabled)..."
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/ios/derivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            DEVELOPMENT_TEAM= \
+            build
+
+          APP_PATH="build/ios/derivedData/Build/Products/Release-iphoneos/Runner.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: Xcode did not produce Runner.app at $APP_PATH"
+            find build/ios -maxdepth 6 -name Runner.app -print || true
+            exit 1
+          fi
+
+          mkdir -p build/ios/iphoneos
+          rm -rf build/ios/iphoneos/Runner.app
+          ditto "$APP_PATH" build/ios/iphoneos/Runner.app
 
           echo "iOS build completed successfully."
 

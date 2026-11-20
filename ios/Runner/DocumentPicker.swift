@@ -15,9 +15,9 @@ import UniformTypeIdentifiers
 final class DocumentPicker: NSObject {
     static let shared = DocumentPicker()
 
-    private var completion: ((String, String)?) -> Void?
+    private var completion: (((String, String)?) -> Void)?
 
-    func present(completion: @escaping (String, String)?) {
+    func present(completion: @escaping ((String, String)?) -> Void) {
         guard let rootVC = UIApplication.shared.connectedScenes
             .compactMap({ ($0 as? UIWindowScene)?.windows.first?.rootViewController })
             .first else {
