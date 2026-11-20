@@ -208,23 +208,29 @@ jobs:
           ]
 
           for config_id in runner_config_ids:
-              config_pattern = (
-                  rf'({config_id} /\\* .*? \\*/ = \\{{.*?'
-                  rf'FRAMEWORK_SEARCH_PATHS = \\(.*?)(\\);)'
-              )
-              fixed, changed = re.subn(
-                  config_pattern,
-                  lambda m: m.group(1)
-                  + '\\n                    "$(FLUTTER_ROOT)/bin/cache/artifacts/engine/ios/Flutter.xcframework/ios-arm64",'
-                  + m.group(2),
-                  fixed,
-                  count=1,
-                  flags=re.DOTALL
-              )
-              if changed != 1:
-                  raise SystemExit(
-                      f"ERROR: Could not add Flutter engine search path to {config_id}."
+              marker = f"{config_id} /*"
+              config_start = fixed.find(marker)
+              if config_start < 0:
+                  raise SystemExit(f"ERROR: Runner configuration {config_id} not found.")
+
+              search_start = fixed.find("FRAMEWORK_SEARCH_PATHS = (", config_start)
+              if search_start < 0:
+                  raise SystemExit(f"ERROR: FRAMEWORK_SEARCH_PATHS missing in {config_id}.")
+
+              search_end = fixed.find(");", search_start)
+              if search_end < 0:
+                  raise SystemExit(f"ERROR: FRAMEWORK_SEARCH_PATHS is unterminated in {config_id}.")
+
+              search_block = fixed[search_start:search_end]
+              flutter_path = '"$(FLUTTER_ROOT)/bin/cache/artifacts/engine/ios/Flutter.xcframework/ios-arm64",'
+              if flutter_path not in search_block:
+                  fixed = (
+                      fixed[:search_end]
+                      + '\n                    '
+                      + flutter_path
+                      + fixed[search_end:]
                   )
+
 
           print("Added Flutter iOS device framework search path to Runner Debug/Release.")
 
