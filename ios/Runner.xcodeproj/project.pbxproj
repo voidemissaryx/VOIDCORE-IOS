@@ -151,7 +151,6 @@
 				A0000000790C399165D10BA7 /* Frameworks */,
 				A00000005D3579AB13FD6C74 /* Resources */,
 				A0000000044534CBF801E281 /* Flutter assets */,
-				A00000002504B1B943B2A4CF /* Flutter build */,
 				A0000000400F57ED5587A974 /* Embed App Extensions */,
 			);
 			buildRules = (
@@ -279,20 +278,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"$FLUTTER_ROOT\"/bin/flutter --version\n";
-		};
-		A00000002504B1B943B2A4CF /* Flutter build */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputPaths = (
-			);
-			name = "Flutter build";
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"$FLUTTER_ROOT\"/bin/flutter build ios --config-only --no-codesign\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -605,7 +590,6 @@
 				A0000000790C399165D10BA7 /* Frameworks */,
 				A00000005D3579AB13FD6C74 /* Resources */,
 				A0000000044534CBF801E281 /* Flutter assets */,
-				A00000002504B1B943B2A4CF /* Flutter build */,
 				A0000000400F57ED5587A974 /* Embed App Extensions */,
 			);
 			buildRules = (
@@ -721,20 +705,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"$FLUTTER_ROOT\"/bin/flutter --version\n";
-		};
-		A00000002504B1B943B2A4CF /* Flutter build */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputPaths = (
-			);
-			name = "Flutter build";
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"$FLUTTER_ROOT\"/bin/flutter build ios --config-only --no-codesign\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
