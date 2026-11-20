@@ -13,6 +13,7 @@ import '../models/cf_account.dart';
 import '../models/settings.dart';
 import '../models/theme_color.dart';
 import '../services/cloudflare_api.dart';
+import '../services/chain_proxy.dart';
 import '../services/geo_assets.dart';
 import '../services/local_proxy.dart';
 import '../services/masque.dart';
@@ -33,6 +34,7 @@ class AppState extends ChangeNotifier {
   static const _kProfile = 'profile';
   static const _kDevice = 'device';
   static const _kSecretAccounts = 'cloudflareAccounts';
+  static const _kConnectionHistory = 'voidcore.connectionHistory';
 
   late SharedPreferences _prefs;
   final _secrets = const FlutterSecureStorage();
@@ -49,6 +51,33 @@ class AppState extends ChangeNotifier {
   /// Cloudflare accounts saved on this device, each with the deployments this install made in
   /// it (secret: tokens and UUIDs).
   List<SavedCfAccount> cfAccounts = [];
+
+  /// Recent connection attempts; contains metadata only, never configuration payloads.
+  List<Map<String, dynamic>> connectionHistory = [];
+  List<ChainProxy> v2rayConfigs = [];
+  List<Map<String, String>> v2raySubscriptions = [];
+  AppMode v2rayAppMode = AppMode.vpn;
+  PerAppMode v2rayPerAppMode = PerAppMode.off;
+  List<String> v2rayPerAppApps = [];
+  int v2rayMtu = 1500;
+  bool v2rayNeedsReconnect = false;
+  bool smartConnecting = false;
+  bool v2raySmartConnecting = false;
+  bool v2rayConnecting = false;
+  bool v2rayDisconnecting = false;
+  String? v2rayError;
+  String? activeV2rayId;
+  String? selectedV2rayId;
+  bool _smartV2rayConnecting = false;
+  String? smartConnectionStatus;
+  String? v2raySmartConnectionStatus;
+  bool _cancelSmartConnection = false;
+  bool _cancelV2raySmartConnection = false;
+  DateTime? _sessionStartedAt;
+  String? _sessionMode;
+  int? _sessionPing;
+  DateTime? _connectStartedAt;
+  String? _connectMode;
 
   /// Every deployment of the accounts in use: those with both Workers and Pages deployed.
   List<({SavedCfAccount account, Deployment deployment})> get deployments => [
@@ -120,7 +149,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// App theme colour and light/dark mode. Separate notifiers so only the theme rebuilds.
-  final themeColor = ValueNotifier(ThemeColor.blue);
+  final themeColor = ValueNotifier(ThemeColor.purple);
   final themeMode = ValueNotifier(ThemeMode.system);
 
   VpnStatus status = VpnStatus.disconnected;
@@ -277,24 +306,155 @@ class AppState extends ChangeNotifier {
   void setExitNode(ExitNode value) =>
       write('device.exit.nodes.${mode.name}', value.name);
 
-  /// The chain proxies the current type can carry, and the one it exits through.
-  List<ChainProxy> get usableChains =>
-      XrayConfigBuilder.chainsFor(mode, profile.chains);
-  ChainProxy? get exitChain =>
-      XrayConfigBuilder.chainFor(mode, device, profile.chains);
+  /// Selects the workspace profile independently from the currently active VPN engine.
+  void selectV2ray(ChainProxy config) {
+    selectedV2rayId = config.id;
+    _prefs.setString('voidcore.v2ray.selected', config.id);
+    notifyListeners();
+  }
 
-  void setExitChain(ChainProxy chain) =>
-      write('device.exit.chains.${mode.name}', chain.id);
+  void updateV2raySettings({
+    AppMode? appMode,
+    PerAppMode? perAppMode,
+    List<String>? apps,
+    int? mtu,
+  }) {
+    if (appMode != null) v2rayAppMode = appMode;
+    if (perAppMode != null) v2rayPerAppMode = perAppMode;
+    if (apps != null) v2rayPerAppApps = List.of(apps);
+    if (mtu != null) v2rayMtu = mtu.clamp(576, 9000).toInt();
+    _prefs.setString('voidcore.v2ray.settings', jsonEncode({
+      'appMode': v2rayAppMode.name,
+      'perAppMode': v2rayPerAppMode.name,
+      'apps': v2rayPerAppApps,
+      'mtu': v2rayMtu,
+    }));
+    if (activeV2rayId != null && status != VpnStatus.disconnected) {
+      v2rayNeedsReconnect = true;
+    }
+    notifyListeners();
+  }
 
-  /// Adds chain proxies (Settings → Chain proxies).
-  void addChains(List<ChainProxy> chains) => write('chains', [
-    for (final c in [...profile.chains, ...chains]) c.toJson(),
-  ]);
+  void _saveV2raySubscriptions() {
+    _prefs.setString('voidcore.v2ray.subscriptions', jsonEncode(v2raySubscriptions));
+  }
 
-  void deleteChain(ChainProxy chain) => write('chains', [
-    for (final c in profile.chains)
-      if (c.id != chain.id) c.toJson(),
-  ]);
+  void addV2raySubscription({required String id, required String name, required String url}) {
+    v2raySubscriptions = [...v2raySubscriptions, {'id': id, 'name': name, 'url': url}];
+    _saveV2raySubscriptions();
+    notifyListeners();
+  }
+
+  void updateV2raySubscription({required String id, required String name, required String url}) {
+    v2raySubscriptions = [
+      for (final item in v2raySubscriptions)
+        if (item['id'] == id) {'id': id, 'name': name, 'url': url} else item,
+    ];
+    _saveV2raySubscriptions();
+    notifyListeners();
+  }
+
+  void deleteV2raySubscription(String id) {
+    v2raySubscriptions = v2raySubscriptions.where((item) => item['id'] != id).toList();
+    final category = 'subscription:$id';
+    final removed = v2rayConfigs.where((config) => config.category == category).toList();
+    for (final config in removed) {
+      if (activeV2rayId == config.id) unawaited(disconnect());
+      if (selectedV2rayId == config.id) selectedV2rayId = null;
+    }
+    v2rayConfigs = v2rayConfigs.where((config) => config.category != category).toList();
+    if (selectedV2rayId == null) {
+      if (v2rayConfigs.isNotEmpty) {
+        selectedV2rayId = v2rayConfigs.first.id;
+        _prefs.setString('voidcore.v2ray.selected', selectedV2rayId!);
+      } else {
+        _prefs.remove('voidcore.v2ray.selected');
+      }
+    }
+    _saveV2rayConfigs();
+    _saveV2raySubscriptions();
+    notifyListeners();
+  }
+
+  void replaceV2raySubscriptionConfigs(String id, List<ChainProxy> configs) {
+    final category = 'subscription:$id';
+    final previous = v2rayConfigs.where((config) => config.category == category).toList();
+    if (previous.any((config) => config.id == activeV2rayId)) {
+      unawaited(disconnect());
+      activeV2rayId = null;
+    }
+    final previousIds = previous.map((config) => config.id).toSet();
+    v2rayConfigs = v2rayConfigs.where((config) => config.category != category).toList();
+    final existingLinks = v2rayConfigs.map((config) => config.link).toSet();
+    for (final config in configs) {
+      if (existingLinks.add(config.link)) {
+        v2rayConfigs.add(config.copyWith(category: category));
+      }
+    }
+    if (selectedV2rayId == null || previousIds.contains(selectedV2rayId)) {
+      selectedV2rayId = v2rayConfigs.where((config) => config.category == category).firstOrNull?.id
+          ?? v2rayConfigs.firstOrNull?.id;
+      if (selectedV2rayId == null) {
+        _prefs.remove('voidcore.v2ray.selected');
+      } else {
+        _prefs.setString('voidcore.v2ray.selected', selectedV2rayId!);
+      }
+    }
+    _saveV2rayConfigs();
+    notifyListeners();
+  }
+
+  void _saveV2rayConfigs() {
+    _prefs.setString(
+      'voidcore.v2ray.configs',
+      jsonEncode(v2rayConfigs.map((c) => c.toJson()).toList()),
+    );
+  }
+
+  /// Adds V2Ray workspace entries to their own store.
+  void addV2rayConfigs(List<ChainProxy> configs) {
+    final existing = v2rayConfigs.map((c) => c.link).toSet();
+    for (final config in configs) {
+      if (existing.add(config.link)) v2rayConfigs.add(config);
+    }
+    if (selectedV2rayId == null && v2rayConfigs.isNotEmpty) {
+      selectedV2rayId = v2rayConfigs.first.id;
+      _prefs.setString('voidcore.v2ray.selected', selectedV2rayId!);
+    }
+    _saveV2rayConfigs();
+    notifyListeners();
+  }
+
+  void updateV2rayConfig(ChainProxy updated) {
+    v2rayConfigs = [
+      for (final config in v2rayConfigs)
+        if (config.id == updated.id) updated else config,
+    ];
+    _saveV2rayConfigs();
+    notifyListeners();
+  }
+
+  void duplicateV2rayConfig(ChainProxy config) {
+    v2rayConfigs.add(ChainProxy(
+      id: newChainId(),
+      name: '${config.name} (copy)',
+      link: config.link,
+      category: config.category,
+    ));
+    _saveV2rayConfigs();
+    notifyListeners();
+  }
+
+  void deleteV2rayConfig(ChainProxy config) {
+    if (selectedV2rayId == config.id) {
+      selectedV2rayId = null;
+      _prefs.remove('voidcore.v2ray.selected');
+    }
+    if (activeV2rayId == config.id) unawaited(disconnect());
+    v2rayConfigs = v2rayConfigs.where((c) => c.id != config.id).toList();
+    _saveV2rayConfigs();
+    notifyListeners();
+  }
 
   /// [region]: an exitRegions code, or empty for the fastest (any region).
   void setExitRegion(String region) => write('device.exit.region', region);
@@ -332,6 +492,44 @@ class AppState extends ChangeNotifier {
     _stored = Profile.fromJson(_decodeMap(_prefs.getString(_kProfile)))
         .updated('vless', null);
     device = DeviceSettings.fromJson(_decodeMap(_prefs.getString(_kDevice)));
+    selectedV2rayId = _prefs.getString('voidcore.v2ray.selected');
+    v2raySubscriptions = _decodeList(_prefs.getString('voidcore.v2ray.subscriptions'))
+        .whereType<Map>()
+        .map((item) => {
+          'id': '${item['id'] ?? ''}',
+          'name': '${item['name'] ?? ''}',
+          'url': '${item['url'] ?? ''}',
+        })
+        .where((item) => item['id']!.isNotEmpty && item['url']!.isNotEmpty)
+        .toList();
+    final savedV2rayConfigs = _prefs.getString('voidcore.v2ray.configs');
+    v2rayConfigs = savedV2rayConfigs == null
+        ? List<ChainProxy>.of(_stored.chains)
+        : _decodeList(savedV2rayConfigs)
+            .whereType<Map>()
+            .map(ChainProxy.parse)
+            .whereType<ChainProxy>()
+            .toList();
+    if (savedV2rayConfigs == null && v2rayConfigs.isNotEmpty) {
+      _saveV2rayConfigs();
+    }
+    if (selectedV2rayId != null && !v2rayConfigs.any((c) => c.id == selectedV2rayId)) {
+      selectedV2rayId = null;
+      await _prefs.remove('voidcore.v2ray.selected');
+    }
+    if (selectedV2rayId == null && v2rayConfigs.isNotEmpty) {
+      selectedV2rayId = v2rayConfigs.first.id;
+      await _prefs.setString('voidcore.v2ray.selected', selectedV2rayId!);
+    }
+    final v2raySettings = _decodeMap(_prefs.getString('voidcore.v2ray.settings'));
+    v2rayAppMode = AppMode.values.asNameMap()[v2raySettings['appMode']] ?? AppMode.vpn;
+    v2rayPerAppMode = PerAppMode.values.asNameMap()[v2raySettings['perAppMode']] ?? PerAppMode.off;
+    v2rayPerAppApps = (v2raySettings['apps'] as List? ?? const []).map((e) => '$e').toList();
+    v2rayMtu = (v2raySettings['mtu'] as num?)?.toInt() ?? 1500;
+    connectionHistory = (_decodeList(_prefs.getString(_kConnectionHistory)))
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
     if (_prefs.containsKey('configOverrides')) {
       await _prefs.remove('configOverrides');
     }
@@ -360,6 +558,16 @@ class AppState extends ChangeNotifier {
       const Duration(seconds: 5),
       (_) => refreshLanIp(),
     );
+  }
+
+  static List<dynamic> _decodeList(String? raw) {
+    if (raw == null) return [];
+    try {
+      final value = jsonDecode(raw);
+      return value is List ? value : [];
+    } catch (_) {
+      return [];
+    }
   }
 
   static Map<String, dynamic> _decodeMap(String? raw) {
@@ -460,7 +668,7 @@ class AppState extends ChangeNotifier {
   void _applyDeviceSideEffects() {
     LocalProxy.credentials = device.lanAuth;
     themeColor.value =
-        ThemeColor.values.asNameMap()[device.themeColor] ?? ThemeColor.blue;
+        ThemeColor.values.asNameMap()[device.themeColor] ?? ThemeColor.purple;
     themeMode.value =
         ThemeMode.values.asNameMap()[device.themeMode] ?? ThemeMode.system;
   }
@@ -516,16 +724,229 @@ class AppState extends ChangeNotifier {
     _setProfile(profile.keepingPrivate(imported));
   }
 
+  /// Persists a short, non-sensitive connection history entry.
+  void _saveHistory({
+    required String mode,
+    required DateTime startedAt,
+    required bool success,
+    int? latencyMs,
+    String? reason,
+  }) {
+    connectionHistory = [
+      {
+        'mode': mode,
+        'startedAt': startedAt.toIso8601String(),
+        'durationSeconds': DateTime.now().difference(startedAt).inSeconds.clamp(0, 1 << 31),
+        'success': success,
+        if (latencyMs != null && latencyMs >= 0) 'latencyMs': latencyMs,
+        if (reason != null) 'reason': reason,
+      },
+      ...connectionHistory,
+    ].take(50).toList();
+    unawaited(_prefs.setString(_kConnectionHistory, jsonEncode(connectionHistory)));
+    notifyListeners();
+  }
+
+  Future<void> clearConnectionHistory() async {
+    connectionHistory = [];
+    await _prefs.remove(_kConnectionHistory);
+    notifyListeners();
+  }
+
+  void cancelSmartConnect() {
+    _cancelSmartConnection = true;
+    smartConnectionStatus = 'Cancelling…';
+    notifyListeners();
+  }
+
+  void cancelV2raySmartConnect() {
+    _cancelV2raySmartConnection = true;
+    v2raySmartConnectionStatus = 'Cancelling…';
+    notifyListeners();
+  }
+
+  Future<bool> _waitForConnection({Duration timeout = const Duration(seconds: 25)}) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      if (_cancelSmartConnection || _cancelV2raySmartConnection) return false;
+      if (isConnected) return true;
+      if (status == VpnStatus.disconnected && error != null) return false;
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
+    return isConnected;
+  }
+
+  Future<int?> _measureDownloadKbps() async {
+    final client = proxiedClient(LocalProxy.port, connectTimeout: const Duration(seconds: 8));
+    final stopwatch = Stopwatch()..start();
+    try {
+      final response = await client
+          .get(Uri.parse('https://speed.cloudflare.com/__down?bytes=500000'))
+          .timeout(const Duration(seconds: 12));
+      stopwatch.stop();
+      if (response.statusCode != 200 || response.bodyBytes.isEmpty || stopwatch.elapsedMilliseconds == 0) {
+        return null;
+      }
+      return (response.bodyBytes.length * 8 / stopwatch.elapsedMilliseconds).round();
+    } catch (_) {
+      return null;
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<void> _waitUntilDisconnected() async {
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while (status != VpnStatus.disconnected && DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+  }
+
+  /// Tests only connection modes configured in this installation, then reconnects using
+  /// the lowest measured tunnel latency. Each candidate is tested through the real VPN engine.
+  Future<ConnectionMode?> smartConnect() async {
+    if (smartConnecting || v2raySmartConnecting || isBusy) return null;
+    smartConnecting = true;
+    _cancelSmartConnection = false;
+    smartConnectionStatus = 'Preparing connection tests…';
+    error = null;
+    notifyListeners();
+
+    final candidates = List<ConnectionMode>.of(availableModes);
+    final results = <({ConnectionMode mode, int ping, int? kbps})>[];
+    final originalMode = mode;
+    final wasInitiallyConnected = isConnected;
+    try {
+      if (isConnected) {
+        await disconnect();
+        await _waitUntilDisconnected();
+      }
+
+      for (final candidate in candidates) {
+        if (_cancelSmartConnection) break;
+        smartConnectionStatus = 'Testing ${candidate.label}…';
+        setMode(candidate);
+        error = null;
+        notifyListeners();
+
+        await connect();
+        final connected = await _waitForConnection();
+        if (connected && !_cancelSmartConnection) {
+          final samples = <int>[];
+          for (var i = 0; i < 3 && !_cancelSmartConnection; i++) {
+            final sample = await VpnChannel.measureDelay();
+            if (sample >= 0) samples.add(sample);
+            if (i < 2) await Future.delayed(const Duration(milliseconds: 250));
+          }
+          samples.sort();
+          final measured = samples.isEmpty ? null : samples[samples.length ~/ 2];
+          final kbps = await _measureDownloadKbps();
+          if (measured != null) {
+            _sessionPing = measured;
+            pingMs = measured;
+            results.add((mode: candidate, ping: measured, kbps: kbps));
+          }
+          await disconnect();
+          await _waitUntilDisconnected();
+        } else if (status != VpnStatus.disconnected) {
+          // A timed-out candidate may still be in its connecting state. Stop it before
+          // moving to the next candidate so tests never overlap.
+          await disconnect();
+          await _waitUntilDisconnected();
+        }
+      }
+
+      if (_cancelSmartConnection) {
+        setMode(originalMode);
+        smartConnectionStatus = 'Auto Connect cancelled';
+        if (wasInitiallyConnected && !isConnected) await connect();
+        return null;
+      }
+
+      if (results.isEmpty) {
+        setMode(originalMode);
+        smartConnectionStatus = 'No connection passed the latency test';
+        error = 'Smart Connect could not find a working connection.';
+        if (wasInitiallyConnected && !isConnected) await connect();
+        return null;
+      }
+
+      final hasSpeedMeasurements = results.any((r) => r.kbps != null);
+      results.sort((a, b) {
+        if (hasSpeedMeasurements) {
+          final speedA = a.kbps ?? -1;
+          final speedB = b.kbps ?? -1;
+          final bySpeed = speedB.compareTo(speedA);
+          if (bySpeed != 0) return bySpeed;
+        }
+        return a.ping.compareTo(b.ping);
+      });
+      final best = results.first;
+      setMode(best.mode);
+      smartConnectionStatus = hasSpeedMeasurements
+          ? 'Best measured: ${best.mode.label} · ${best.kbps} kbps · ${best.ping} ms'
+          : 'Lowest measured latency: ${best.mode.label} · ${best.ping} ms';
+      error = null;
+      await connect();
+      final reconnected = await _waitForConnection();
+      if (!reconnected) {
+        smartConnectionStatus = 'Best measured: ${best.mode.label}, but the final reconnect failed';
+        return null;
+      }
+      return best.mode;
+    } finally {
+      smartConnecting = false;
+      _cancelSmartConnection = false;
+      notifyListeners();
+    }
+  }
+
   // endregion
 
   // region VPN
 
   void _onVpnState(VpnStateEvent event) {
+    final previousStatus = status;
     final wasConnected = status == VpnStatus.connected;
     final sameSession = connectedAt != null && connectedAt == event.connectedAt;
     status = event.status;
-    error = event.error;
+    if (v2rayConnecting || v2rayDisconnecting || v2raySmartConnecting || activeV2rayId != null) {
+      v2rayError = event.error;
+    } else {
+      error = event.error;
+    }
     connectedAt = event.connectedAt;
+
+    if (event.status == VpnStatus.connected && !wasConnected) {
+      _sessionStartedAt = event.connectedAt ?? _connectStartedAt ?? DateTime.now();
+      _sessionMode = _connectMode ?? mode.label;
+      _sessionPing = null;
+      _connectStartedAt = null;
+      _connectMode = null;
+    } else if (event.status == VpnStatus.disconnected &&
+        previousStatus != VpnStatus.disconnected) {
+      if (_sessionStartedAt != null) {
+        _saveHistory(
+          mode: _sessionMode ?? mode.label,
+          startedAt: _sessionStartedAt!,
+          success: true,
+          latencyMs: _sessionPing,
+        );
+        _sessionStartedAt = null;
+        _sessionMode = null;
+        _sessionPing = null;
+      } else if (previousStatus == VpnStatus.connecting || _connectStartedAt != null) {
+        _saveHistory(
+          mode: _connectMode ?? mode.label,
+          startedAt: _connectStartedAt ?? DateTime.now(),
+          success: false,
+          reason: 'Connection failed',
+        );
+        _connectStartedAt = null;
+        _connectMode = null;
+      }
+    }
+    if (event.status == VpnStatus.disconnected) activeV2rayId = null;
     exitDetail = event.detail;
     if (status == VpnStatus.connected) {
       _startTrafficTimer();
@@ -568,7 +989,20 @@ class AppState extends ChangeNotifier {
       status == VpnStatus.disconnected ? connect() : disconnect();
 
   Future<void> connect() async {
-    if (isBusy) return;
+    if (isBusy || _smartV2rayConnecting) return;
+    if (status != VpnStatus.disconnected) {
+      await VpnChannel.stop();
+      await _waitUntilDisconnected();
+      if (status != VpnStatus.disconnected) {
+        error = 'The previous VPN session did not stop; refusing to start another engine.';
+        notifyListeners();
+        return;
+      }
+    }
+    activeV2rayId = null;
+    v2rayNeedsReconnect = false;
+    _connectStartedAt = DateTime.now();
+    _connectMode = mode.label;
     error = null;
     status = VpnStatus.connecting;
     notifyListeners();
@@ -596,16 +1030,220 @@ class AppState extends ChangeNotifier {
     } catch (e) {
       status = VpnStatus.disconnected;
       error = e is StateError ? e.message : '$e';
+      if (_connectStartedAt != null) {
+        _saveHistory(
+          mode: _connectMode ?? mode.label,
+          startedAt: _connectStartedAt!,
+          success: false,
+          reason: 'Connection failed',
+        );
+        _connectStartedAt = null;
+        _connectMode = null;
+      }
       notifyListeners();
     }
   }
 
-  Future<void> disconnect() => VpnChannel.stop();
+  /// Starts a saved V2Ray workspace profile using the shared Xray/VPN service.
+  /// Any existing engine is stopped first, so only one tunnel can own the VPN interface.
+  Future<bool> connectV2ray(ChainProxy config, {bool fromSmartConnect = false}) async {
+    if (isBusy || (v2raySmartConnecting && !fromSmartConnect) || smartConnecting) return false;
+    v2rayConnecting = true;
+    v2rayError = null;
+    error = null;
+    notifyListeners();
+    try {
+      if (status != VpnStatus.disconnected) {
+        await VpnChannel.stop();
+        await _waitUntilDisconnected();
+        if (status != VpnStatus.disconnected) {
+          throw StateError('The previous VPN session did not stop.');
+        }
+      }
+      activeV2rayId = config.id;
+      selectV2ray(config);
+      v2rayNeedsReconnect = false;
+      _connectStartedAt = DateTime.now();
+      _connectMode = 'V2Ray · ${config.name}';
+      status = VpnStatus.connecting;
+      notifyListeners();
+      if (!await VpnChannel.prepare(vpn: v2rayAppMode == AppMode.vpn)) {
+        throw StateError('VPN permission denied');
+      }
+      final build = await XrayConfigBuilder(profile, device)
+          .buildStandaloneChain(config, appMode: v2rayAppMode, mtu: v2rayMtu);
+      await VpnChannel.start(
+        config: build.config,
+        remark: 'V2Ray · ${config.name}',
+        perAppMode: v2rayPerAppMode.name,
+        apps: v2rayPerAppApps,
+        mtu: v2rayMtu,
+        appendHttpProxy: false,
+        proxyOnly: v2rayAppMode == AppMode.proxy,
+        verifyConnection: true,
+      );
+      final connected = await _waitForConnection();
+      if (!connected) {
+        await VpnChannel.stop();
+        await _waitUntilDisconnected();
+        if (status != VpnStatus.disconnected) {
+          throw StateError('The failed V2Ray session did not stop cleanly.');
+        }
+        activeV2rayId = null;
+      }
+      return connected;
+    } catch (e) {
+      try {
+        await VpnChannel.stop();
+        await _waitUntilDisconnected();
+      } catch (_) {
+        // Preserve the original startup error.
+      }
+      activeV2rayId = null;
+      status = VpnStatus.disconnected;
+      v2rayError = e is StateError ? e.message : '$e';
+      if (_connectStartedAt != null) {
+        _saveHistory(
+          mode: _connectMode ?? 'V2Ray',
+          startedAt: _connectStartedAt!,
+          success: false,
+          reason: 'Connection failed',
+        );
+        _connectStartedAt = null;
+        _connectMode = null;
+      }
+      notifyListeners();
+      return false;
+    } finally {
+      v2rayConnecting = false;
+      notifyListeners();
+    }
+  }
+
+  /// Auto Connect probes TCP-capable V2Ray endpoints, then tries the lowest-latency
+  /// candidates in order. A failed real connection falls through to the next.
+  Future<ChainProxy?> smartConnectV2ray() async {
+    if ((smartConnecting || v2raySmartConnecting || isBusy) || v2rayConfigs.isEmpty) return null;
+    v2raySmartConnecting = true;
+    _smartV2rayConnecting = true;
+    _cancelV2raySmartConnection = false;
+    v2raySmartConnectionStatus = 'Checking servers…';
+    v2rayError = null;
+    error = null;
+    notifyListeners();
+    try {
+      // Probe the physical network, not an existing VPN tunnel.
+      if (status != VpnStatus.disconnected) {
+        await VpnChannel.stop();
+        await _waitUntilDisconnected();
+        if (status != VpnStatus.disconnected) {
+          throw StateError('The previous VPN session did not stop before server checks.');
+        }
+      }
+      final measured = <({ChainProxy config, int latency})>[];
+      var skippedUdpOnly = 0;
+      for (final config in v2rayConfigs) {
+        if (_cancelV2raySmartConnection) break;
+        final info = ChainInfo.of(config.link);
+        if (info == null) continue;
+        if (info.isUdp) {
+          skippedUdpOnly++;
+          continue;
+        }
+        v2raySmartConnectionStatus = 'Checking servers…';
+        notifyListeners();
+        try {
+          final watch = Stopwatch()..start();
+          final socket = await Socket.connect(
+            info.uri.server,
+            info.uri.port,
+            timeout: const Duration(seconds: 4),
+          );
+          watch.stop();
+          socket.destroy();
+          measured.add((config: config, latency: watch.elapsedMilliseconds));
+        } catch (_) {
+          // An unreachable TCP endpoint is excluded; no synthetic ping is reported.
+        }
+      }
+      if (_cancelV2raySmartConnection) {
+        v2raySmartConnectionStatus = 'Auto Connect cancelled';
+        return null;
+      }
+      measured.sort((a, b) => a.latency.compareTo(b.latency));
+      if (measured.isEmpty) {
+        v2raySmartConnectionStatus = skippedUdpOnly > 0
+            ? 'No TCP-reachable server found; skipped $skippedUdpOnly UDP-only profile(s) because they cannot be measured with a direct TCP probe.'
+            : 'No TCP-reachable V2Ray server was found';
+        return null;
+      }
+      for (final candidate in measured) {
+        if (_cancelV2raySmartConnection) break;
+        v2raySmartConnectionStatus = 'Connecting';
+        notifyListeners();
+        if (await connectV2ray(candidate.config, fromSmartConnect: true)) {
+          v2raySmartConnectionStatus = 'Connected';
+          return candidate.config;
+        }
+        if (_cancelV2raySmartConnection) break;
+        if (status != VpnStatus.disconnected) {
+          await VpnChannel.stop();
+          await _waitUntilDisconnected();
+        }
+      }
+      if (_cancelV2raySmartConnection) {
+        v2raySmartConnectionStatus = 'Auto Connect cancelled';
+        return null;
+      }
+      v2raySmartConnectionStatus = 'All reachable V2Ray servers failed to connect';
+      return null;
+    } finally {
+      v2raySmartConnecting = false;
+      _smartV2rayConnecting = false;
+      _cancelV2raySmartConnection = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> disconnect() async {
+    final wasV2ray = activeV2rayId != null;
+    if (wasV2ray) {
+      v2rayDisconnecting = true;
+      notifyListeners();
+    }
+    activeV2rayId = null;
+    v2rayNeedsReconnect = false;
+    try {
+      await VpnChannel.stop();
+      if (wasV2ray) await _waitUntilDisconnected();
+    } finally {
+      if (wasV2ray) {
+        v2rayDisconnecting = false;
+        notifyListeners();
+      }
+    }
+  }
 
   Future<void> reconnect() async {
+    final v2rayId = activeV2rayId;
+    if (v2rayId != null) {
+      final saved = v2rayConfigs.where((c) => c.id == v2rayId).firstOrNull;
+      if (saved != null) {
+        await connectV2ray(saved);
+        return;
+      }
+      activeV2rayId = null;
+    }
     if (status == VpnStatus.disconnected) return connect();
-    // Starting again replaces the running session in the service.
+    // Stop the current engine before starting the newly selected mode/configuration.
     needsReconnect = false;
+    await VpnChannel.stop();
+    await _waitUntilDisconnected();
+    if (status != VpnStatus.disconnected) {
+      error = 'The previous VPN session did not stop.';
+      notifyListeners();
+      return;
+    }
     // Switching from Proxy to VPN mode needs the VPN permission.
     if (!await VpnChannel.prepare(vpn: !proxyMode)) {
       error = 'VPN permission denied';
@@ -793,6 +1431,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     try {
       pingMs = await VpnChannel.measureDelay();
+      if (isConnected) _sessionPing = pingMs;
     } catch (_) {
       pingMs = -1;
     }

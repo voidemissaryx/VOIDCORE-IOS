@@ -479,76 +479,64 @@ void main() {
       'vmess_ws': 'vmess://$vmess',
     };
     for (final MapEntry(key: name, value: link) in links.entries) {
-      final c = (await builder(
-        chains(link),
-        chainExit,
-      ).build(ConnectionMode.worker)).config;
+      final profile = chains(link);
+      final selected = Profile.fromJson(profile).chains.single;
+      final c = (await builder(profile).buildStandaloneChain(selected)).config;
       final outbounds = (c['outbounds'] as List).cast<Map>();
-      // One exit, first (Xray's default), dialing the loopback back into routing as chain-in.
-      expect(outbounds.first['tag'], 'exit', reason: name);
+      final proxy = outbounds.singleWhere((o) => o['tag'] == 'proxy');
+      final expectedProtocols = {
+        'vless_reality': 'vless',
+        'trojan_ws': 'trojan',
+        'ss': 'shadowsocks',
+        'socks': 'socks',
+        'vmess_ws': 'vmess',
+      };
+      expect(proxy['protocol'], expectedProtocols[name], reason: name);
       expect(
-        outbounds.first['streamSettings']['sockopt']['dialerProxy'],
-        'exit-dialer',
+        proxy['streamSettings']?['sockopt']?['dialerProxy'],
+        isNull,
         reason: name,
       );
-      expect(outbounds[1], {
-        'protocol': 'loopback',
-        'settings': {'inboundTag': 'chain-in'},
-        'tag': 'exit-dialer',
-      }, reason: name);
-      expect(outboundsOf(c, 'exit').length, 2, reason: name);
+      expect(outboundsOf(c, 'exit'), isEmpty, reason: name);
+      expect(outbounds.any((o) => o['protocol'] == 'loopback'), isFalse);
       final rules = (c['routing']['rules'] as List).cast<Map>();
-      // chain-in goes through the connection with the remote DNS, before the bypass / block rules.
-      final chainIn = rules.indexWhere(
-        (r) => (r['inboundTag'] as List?)?.contains('chain-in') ?? false,
-      );
-      expect(rules[chainIn]['inboundTag'], [
-        'chain-in',
-        'remote-dns',
-      ], reason: name);
-      expect(rules[chainIn]['balancerTag'], 'all-proxies', reason: name);
       expect(
-        rules.indexWhere((r) => r['domain'] != null || r['ip'] != null),
-        greaterThan(chainIn),
+        rules.any((r) =>
+          (r['inboundTag'] as List?)?.contains('chain-in') ?? false
+        ),
+        isFalse,
         reason: name,
       );
-      expect(rules.last['outboundTag'], 'exit', reason: name);
-      // Only the proxies are balanced and pinged.
-      expect((c['routing']['balancers'] as List).map((b) => b['tag']), [
-        'all-proxies',
-      ], reason: name);
-      expect(c['burstObservatory']['subjectSelector'], ['proxy'], reason: name);
-      // UDP goes to the chain proxy too: no UDP block.
-      final udpBlocked = rules.any(
-        (r) =>
-            r['network'] == 'udp' &&
-            r['port'] == null &&
-            r['outboundTag'] == 'block',
-      );
-      expect(udpBlocked, isFalse, reason: name);
-      dump('chain_best_$name', c);
+      expect(rules.last['outboundTag'], 'proxy', reason: name);
+      expect(c.containsKey('burstObservatory'), isFalse, reason: name);
+      dump('standalone_v2ray_$name', c);
     }
   });
 
   test('a TLS chain proxy pins its certificate and verifies it by name (pcs / vcn)', () async {
     const fp =
         'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
-    final c = (await builder(
-      chains(
-        'trojan://pass@192.0.2.4:443?security=tls&sni=front.example.com&pcs=$fp&vcn=real.example.com#t',
-      ),
-      chainExit,
-    ).build(ConnectionMode.worker)).config;
-    final tls = chainOf(c)!['streamSettings']['tlsSettings'] as Map;
+    final profile = chains(
+      'trojan://pass@192.0.2.4:443?security=tls&sni=front.example.com&pcs=$fp&vcn=real.example.com#t',
+    );
+    final selected = Profile.fromJson(profile).chains.single;
+    final c = (await builder(profile).buildStandaloneChain(selected)).config;
+    final proxy = (c['outbounds'] as List).cast<Map>().singleWhere(
+      (o) => o['tag'] == 'proxy',
+    );
+    final tls = proxy['streamSettings']['tlsSettings'] as Map;
     expect(tls['pinnedPeerCertSha256'], fp);
     expect(tls['verifyPeerCertByName'], 'real.example.com');
     dump('chain_best_trojan_pinned', c);
     // Without them, neither key is set.
-    final plain = (await builder(
-      chains('trojan://pass@192.0.2.4:443?security=tls#t'),
-      chainExit,
-    ).build(ConnectionMode.worker)).config;
-    final plainTls = chainOf(plain)!['streamSettings']['tlsSettings'] as Map;
+    final plainProfile = chains('trojan://pass@192.0.2.4:443?security=tls#t');
+    final plain = (await builder(plainProfile).buildStandaloneChain(
+      Profile.fromJson(plainProfile).chains.single,
+    )).config;
+    final plainProxy = (plain['outbounds'] as List).cast<Map>().singleWhere(
+      (o) => o['tag'] == 'proxy',
+    );
+    final plainTls = plainProxy['streamSettings']['tlsSettings'] as Map;
     expect(plainTls.keys, isNot(contains('pinnedPeerCertSha256')));
     expect(plainTls.keys, isNot(contains('verifyPeerCertByName')));
   });
@@ -1725,93 +1713,96 @@ void main() {
         hasSanction(
           (await builder(profile, chainExit).build(ConnectionMode.warp)).config,
         ),
-        isFalse,
+        isTrue,
       );
     });
 
-    test('chain proxy is dialed through WARP', () async {
+    test('legacy Chain selection does not affect the main WARP connection', () async {
       final c = (await builder({
         ...warpSettings,
         ...chains(chainLink),
         'general': {'enableIpv6': true}, // keeps the IPv6 endpoint
       }, chainExit).build(ConnectionMode.warp)).config;
-      expect(chainOf(c)!['protocol'], 'vless');
+      // A legacy Chain exit preference must not attach a V2Ray profile
+      // to the main WARP connection.
+      expect(chainOf(c), isNull);
+      expect(outboundsOf(c, 'exit'), isEmpty);
       expect(outboundsOf(c, 'proxy-').length, 3);
-      expect((c['routing']['balancers'] as List).map((x) => x['tag']), [
-        'all-proxies',
-      ]);
+      expect(
+        (c['outbounds'] as List).cast<Map>().any(
+          (o) => o['protocol'] == 'loopback',
+        ),
+        isFalse,
+      );
       final rules = (c['routing']['rules'] as List).cast<Map>();
-      expect(rules.firstWhere((r) => r['balancerTag'] != null)['inboundTag'], [
-        'chain-in',
-        'remote-dns',
-      ]);
-      expect(rules.last['outboundTag'], 'exit');
-      dump('warp_chain_best', c);
+      expect(
+        rules.any((r) =>
+          (r['inboundTag'] as List?)?.contains('chain-in') ?? false
+        ),
+        isFalse,
+      );
+      expect(rules.last['network'], 'tcp,udp');
+      dump('warp_ignores_legacy_chain', c);
     });
 
-    test(
-      'a WireGuard chain proxy is dialed through WARP, not through the worker',
-      () async {
-        final link = wireGuardConfToChain(wgConf).link;
-        final c = (await builder({
-          ...warpSettings,
-          ...chains(link),
-        }, chainExit).build(ConnectionMode.warp)).config;
-        final chain = chainOf(c)!;
-        expect(chain['protocol'], 'wireguard');
-        expect(chain['settings'], {
-          'secretKey': 'cHJpdmF0ZWtleXByaXZhdGVrZXlwcml2YXRla2V5MDE=',
-          'address': ['10.0.0.2/32', 'fd00::2/128'],
-          'peers': [
-            {
-              'publicKey': 'cHVibGlja2V5cHVibGlja2V5cHVibGlja2V5cHViMDE+',
-              'preSharedKey': 'cHJlc2hhcmVka2V5cHJlc2hhcmVka2V5cHJlc2hhcjE=',
-              'endpoint': 'vpn.example.com:51820',
-              'keepAlive': 25,
-              'allowedIPs': ['0.0.0.0/0', '::/0'],
-            },
-          ],
-          'mtu': 1380,
-          'remoteDNS': ['10.0.0.1', 'fd00::1'], // IPs only
-        });
-        dump('warp_chain_wireguard', c);
-        // A config without MTU leaves it to Xray's default.
-        final noMtu = wireGuardConfToChain(
-          wgConf.replaceFirst('MTU = 1380\n', ''),
-        ).link;
-        final d = (await builder({
-          ...warpSettings,
-          ...chains(noMtu),
-        }, chainExit).build(ConnectionMode.warp)).config;
-        expect((chainOf(d)!['settings'] as Map).containsKey('mtu'), isFalse);
-        // The worker relays TCP only.
-        final w = (await builder(
-          chains(link),
-          chainExit,
-        ).build(ConnectionMode.worker)).config;
-        expect(chainOf(w), isNull);
-      },
-    );
+    test('WireGuard profiles connect as standalone V2Ray entries', () async {
+      final link = wireGuardConfToChain(wgConf).link;
+      final profile = chains(link);
+      final selected = Profile.fromJson(profile).chains.single;
+      final c = (await builder(profile).buildStandaloneChain(selected)).config;
+      final proxy = (c['outbounds'] as List).cast<Map>().singleWhere(
+        (o) => o['tag'] == 'proxy',
+      );
+      expect(proxy['protocol'], 'wireguard');
+      expect(proxy['settings'], {
+        'secretKey': 'cHJpdmF0ZWtleXByaXZhdGVrZXlwcml2YXRla2V5MDE=',
+        'address': ['10.0.0.2/32', 'fd00::2/128'],
+        'peers': [
+          {
+            'publicKey': 'cHVibGlja2V5cHVibGlja2V5cHVibGlja2V5cHViMDE+',
+            'preSharedKey': 'cHJlc2hhcmVka2V5cHJlc2hhcmVka2V5cHJlc2hhcjE=',
+            'endpoint': 'vpn.example.com:51820',
+            'keepAlive': 25,
+            'allowedIPs': ['0.0.0.0/0', '::/0'],
+          },
+        ],
+        'mtu': 1380,
+        'remoteDNS': ['10.0.0.1', 'fd00::1'],
+      });
+      expect(proxy['streamSettings']?['sockopt']?['dialerProxy'], isNull);
 
-    test('a Hysteria2 chain proxy is dialed through WARP, not through the worker', () async {
-      // OpenSSL's format: colons between the bytes.
+      final noMtu = wireGuardConfToChain(
+        wgConf.replaceFirst('MTU = 1380\n', ''),
+      ).link;
+      final noMtuProfile = chains(noMtu);
+      final d = (await builder(noMtuProfile).buildStandaloneChain(
+        Profile.fromJson(noMtuProfile).chains.single,
+      )).config;
+      final noMtuProxy = (d['outbounds'] as List).cast<Map>().singleWhere(
+        (o) => o['tag'] == 'proxy',
+      );
+      expect((noMtuProxy['settings'] as Map).containsKey('mtu'), isFalse);
+    });
+
+    test('Hysteria2 profiles connect as standalone V2Ray entries', () async {
       const pin =
           'E3:B0:C4:42:98:FC:1C:14:9A:FB:F4:C8:99:6F:B9:24:27:AE:41:E4:64:9B:93:4C:A4:95:99:1B:78:52:B8:55';
       const link =
           'hysteria2://secret@hy.example.com:8443?sni=sni.example.com&obfs=salamander&obfs-password=mask'
           '&pinSHA256=$pin&mport=20000-30000,443#hy2';
-      final c = (await builder({
-        ...warpSettings,
-        ...chains(link),
-      }, chainExit).build(ConnectionMode.warp)).config;
-      final chain = chainOf(c)!;
-      expect(chain['protocol'], 'hysteria');
-      expect(chain['settings'], {
+      final profile = chains(link);
+      final selected = Profile.fromJson(profile).chains.single;
+      final c = (await builder(profile).buildStandaloneChain(selected)).config;
+      final proxy = (c['outbounds'] as List).cast<Map>().singleWhere(
+        (o) => o['tag'] == 'proxy',
+      );
+      expect(proxy['protocol'], 'hysteria');
+      expect(proxy['settings'], {
         'version': 2,
         'address': 'hy.example.com',
         'port': 8443,
       });
-      expect(chain['streamSettings'], {
+      expect(proxy['streamSettings'], {
         'network': 'hysteria',
         'hysteriaSettings': {'version': 2, 'auth': 'secret'},
         'security': 'tls',
@@ -1821,7 +1812,6 @@ void main() {
         },
         'finalmask': {
           'udp': [
-            // Last: Xray reverses the list, and udphop must come first there.
             {
               'type': 'salamander',
               'settings': {'password': 'mask'},
@@ -1835,14 +1825,9 @@ void main() {
             },
           ],
         },
-        'sockopt': {'dialerProxy': 'exit-dialer'},
       });
-      dump('warp_chain_hysteria2', c);
-      final w = (await builder(
-        chains(link),
-        chainExit,
-      ).build(ConnectionMode.worker)).config;
-      expect(chainOf(w), isNull);
+      expect(proxy['streamSettings']?['sockopt']?['dialerProxy'], isNull);
+      dump('standalone_v2ray_hysteria2', c);
     });
 
     test(

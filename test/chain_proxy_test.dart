@@ -1,3 +1,4 @@
+import 'package:bpb/models/settings.dart';
 import 'package:bpb/services/chain_proxy.dart';
 import 'package:bpb/services/proxy_uri.dart';
 import 'package:bpb/services/xray_config.dart';
@@ -18,6 +19,20 @@ PersistentKeepalive = 25
 ''';
 
 void main() {
+  test('chain proxy favorite and category metadata round-trip', () {
+    final parsed = ChainProxy.parse({
+      'id': 'fav-1',
+      'name': 'My server',
+      'link': 'socks://127.0.0.1:1080',
+      'favorite': true,
+      'category': 'Personal',
+    })!;
+    expect(parsed.favorite, isTrue);
+    expect(parsed.category, 'Personal');
+    final restored = ChainProxy.parse(parsed.toJson())!;
+    expect([restored.favorite, restored.category], [true, 'Personal']);
+  });
+
   test('a WireGuard config becomes a wireguard:// link that reads back the same', () {
     final chain = wireGuardConfToChain(wgConf);
     expect(chain.name, 'vpn.example.com');

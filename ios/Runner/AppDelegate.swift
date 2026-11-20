@@ -124,7 +124,7 @@ class AppDelegate: FlutterAppDelegate {
 
         case "appInfo":
             result([
-                "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.3.1",
+                "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.5.7",
                 "abis": ["arm64", "arm64e", "x86_64"],
             ])
 

@@ -11,7 +11,7 @@ import 'der.dart';
 class MitmCa {
   static const certFile = 'bpb-cert.crt';
   static const keyFile = 'bpb-cert.key';
-  static const _name = 'BPB MITM CA';
+  static const _name = 'voidcore-cert';
 
   /// PEM, "CERTIFICATE".
   final String cert;

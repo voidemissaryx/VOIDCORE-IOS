@@ -364,7 +364,7 @@ void main() {
     );
   });
 
-  test('a chain proxy exits through MASQUE', () async {
+  test('legacy Chain exit selection does not affect the MASQUE connection', () async {
     final b = await build(
       'normal',
       {
@@ -380,18 +380,16 @@ void main() {
         'exit': {'node': 'chain'},
       },
     );
-    final exits = (b.config['outbounds'] as List).cast<Map>().where(
-      (o) => o['tag'] == 'exit',
-    );
-    expect(
-      exits.single['streamSettings']['sockopt']['dialerProxy'],
-      'exit-dialer',
-    );
+    final outbounds = (b.config['outbounds'] as List).cast<Map>();
+    expect(outbounds.where((o) => o['tag'] == 'exit'), isEmpty);
+    expect(outbounds.any((o) => o['protocol'] == 'loopback'), isFalse);
     final rules = (b.config['routing']['rules'] as List).cast<Map>();
-    final chainIn = rules.firstWhere(
-      (r) => (r['inboundTag'] as List?)?.contains('chain-in') ?? false,
+    expect(
+      rules.any((r) =>
+        (r['inboundTag'] as List?)?.contains('chain-in') ?? false
+      ),
+      isFalse,
     );
-    expect(chainIn['balancerTag'], 'all-proxies');
     expect(
       (b.config['routing']['balancers'] as List).single['fallbackTag'],
       'proxy-1',

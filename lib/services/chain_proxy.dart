@@ -21,8 +21,9 @@ class ChainInfo {
 
   bool get isWireGuard => uri.protocol == 'wireguard';
 
-  /// WireGuard and Hysteria2 (QUIC) run over UDP.
-  bool get isUdp => isWireGuard || uri.protocol == 'hysteria2';
+  /// These proxy protocols/transports use UDP and cannot be latency-probed with a TCP socket.
+  bool get isUdp => isWireGuard || uri.protocol == 'hysteria2' ||
+      const {'kcp', 'mkcp', 'quic'}.contains((uri['type'] ?? '').toLowerCase());
 
   /// `host:port` (an IPv6 host in brackets).
   String get address =>
@@ -42,7 +43,7 @@ class ChainInfo {
 
   /// The link's `type` for the V2Ray protocols; null for WireGuard and Hysteria2, which have none.
   String? get transport {
-    if (isUdp) return null;
+    if (isWireGuard || uri.protocol == 'hysteria2') return null;
     return switch ((uri['type'] ?? 'tcp').toLowerCase()) {
       'tcp' || 'raw' => 'TCP',
       'ws' => 'WS',
@@ -50,6 +51,7 @@ class ChainInfo {
       'xhttp' || 'splithttp' => 'XHTTP',
       'httpupgrade' => 'HTTPUpgrade',
       'kcp' || 'mkcp' => 'mKCP',
+      'quic' => 'QUIC',
       'h2' || 'http' => 'HTTP/2',
       final t => t.toUpperCase(),
     };

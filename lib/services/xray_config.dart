@@ -300,11 +300,9 @@ class XrayConfigBuilder {
         node == ExitNode.tor) {
       return ExitNode.worker;
     }
-    if (node == ExitNode.chain &&
-        (mode == ConnectionMode.serverless ||
-            chainFor(mode, device, chains) == null)) {
-      return ExitNode.worker;
-    }
+    // Chain Proxy is no longer exposed by the VOIDCORE workspace; keep legacy
+    // selections from silently routing new VOIDCORE sessions through a chain.
+    if (node == ExitNode.chain) return ExitNode.worker;
     return node;
   }
 
@@ -355,6 +353,9 @@ class XrayConfigBuilder {
   /// The Psiphon / Tor type: the exit process connects by itself (the app is outside the VPN),
   /// and the socks outbound to it is the "proxy".
   bool _exitType = false;
+  bool _standaloneV2ray = false;
+  AppMode? _standaloneAppMode;
+  int? _standaloneMtu;
 
   /// Psiphon or Tor (as an exit or as the type).
   bool get _isExitProcess => _exit == ExitNode.psiphon || _exit == ExitNode.tor;
@@ -438,10 +439,49 @@ class XrayConfigBuilder {
 
   /// Serverless, or a Best Ping balancer over every worker address/port (or WARP endpoint).
   /// [variant] picks Worker's and WARP's config.
+  /// Builds a standalone TUN configuration for a saved V2Ray workspace entry.
+  /// It reuses the same Xray outbound builders as chain proxies, but routes traffic
+  /// directly through this outbound instead of dialing it through another VPN.
+  Future<XrayBuild> buildStandaloneChain(
+    ChainProxy selected, {
+    AppMode? appMode,
+    int? mtu,
+  }) async {
+    _standaloneV2ray = true;
+    _standaloneAppMode = appMode ?? device.appMode;
+    _standaloneMtu = mtu ?? device.mtu;
+    _mode = ConnectionMode.worker;
+    _exit = ExitNode.chain;
+    _exitType = false;
+    final outbound = _chainOutbound(selected: selected);
+    if (outbound == null) {
+      throw StateError('Could not build the selected V2Ray configuration.');
+    }
+    outbound['tag'] = 'proxy';
+    final stream = outbound['streamSettings'];
+    if (stream is Map) {
+      final sockopt = stream['sockopt'];
+      if (sockopt is Map) {
+        sockopt.remove('dialerProxy');
+        if (sockopt.isEmpty) stream.remove('sockopt');
+      }
+    }
+    _exit = ExitNode.worker;
+    final config = await _buildConfig(
+      outbounds: [outbound],
+      isBalancer: false,
+      outboundAddrs: [ProxyUri.parse(selected.link).server],
+    );
+    return XrayBuild(config);
+  }
+
   Future<XrayBuild> build(
     ConnectionMode mode, {
     ConnectionVariant variant = ConnectionVariant.normal,
   }) {
+    _standaloneV2ray = false;
+    _standaloneAppMode = null;
+    _standaloneMtu = null;
     _exit = exitFor(mode, device, profile.chains);
     _mode = mode;
     _exitType = mode == ConnectionMode.psiphon || mode == ConnectionMode.tor;
@@ -1035,11 +1075,11 @@ class XrayConfigBuilder {
   /// The VPN device (not in proxy mode) and the local SOCKS/HTTP proxy.
   List<Map<String, dynamic>> _localInbounds(Map<String, dynamic> sniffing) => [
     // Proxy mode has no VPN device: only the mixed inbound below.
-    if (device.appMode != AppMode.proxy)
+    if ((_standaloneV2ray ? _standaloneAppMode : device.appMode) != AppMode.proxy)
       {
         'tag': 'tun',
         'protocol': 'tun',
-        'settings': {'name': 'xray0', 'MTU': device.mtu},
+        'settings': {'name': 'xray0', 'MTU': _standaloneV2ray ? _standaloneMtu : device.mtu},
         'sniffing': sniffing,
       },
     {
@@ -1409,16 +1449,16 @@ class XrayConfigBuilder {
     add(ip: bypassIps, outbound: 'direct');
 
     if (_hasExit) rules.insertAll(0, exitWorkerlessRules);
-    // The worker and Tor only carry TCP (the worker also DNS); refuse other UDP so apps fall
-    // back to TCP fast. Psiphon carries UDP (over its udpgw), and the chain proxy is the exit
-    // for everything, UDP included.
+    // Worker and Tor modes are TCP-only. Standalone V2Ray profiles can carry UDP according
+    // to their protocol; Psiphon and chain exits can also carry UDP.
     final tcpOnly =
-        _exit == ExitNode.tor ||
+        !_standaloneV2ray &&
+        (_exit == ExitNode.tor ||
         (!isServerlessPacket &&
             !isServerlessDns &&
             !isWarp &&
             _exit != ExitNode.psiphon &&
-            _exit != ExitNode.chain);
+            _exit != ExitNode.chain));
     if (tcpOnly) {
       add(network: 'udp', outbound: 'block');
     } else if (profile.routing.block.isOn('quic')) {
@@ -1802,9 +1842,9 @@ class XrayConfigBuilder {
   }
 
   /// The chain proxy chosen for this connection type, when it's the exit node.
-  Map<String, dynamic>? _chainOutbound() {
-    if (_exit != ExitNode.chain) return null;
-    final chain = chainFor(_mode, device, profile.chains);
+  Map<String, dynamic>? _chainOutbound({ChainProxy? selected}) {
+    if (_exit != ExitNode.chain && selected == null) return null;
+    final chain = selected ?? chainFor(_mode, device, profile.chains);
     if (chain == null) {
       throw StateError('Add a chain proxy in Settings → Chain proxies first.');
     }
@@ -1818,6 +1858,9 @@ class XrayConfigBuilder {
     if (p.protocol == 'hysteria2') return _hysteria2Chain(p);
 
     final type = p['type'] ?? 'raw';
+    if (type == 'quic') {
+      throw StateError('The bundled Xray core does not support legacy QUIC transport.');
+    }
     final security = p['security'];
     final streamSettings = <String, dynamic>{
       'network': type,
@@ -1917,6 +1960,26 @@ class XrayConfigBuilder {
                     },
                   }
                 : {'type': 'none'},
+          },
+        };
+      case 'kcp' || 'mkcp':
+        return {
+          'kcpSettings': {
+            'mtu': int.tryParse(p['mtu'] ?? '') ?? 1350,
+            'tti': int.tryParse(p['tti'] ?? '') ?? 20,
+            'uplinkCapacity': int.tryParse(p['uplinkCapacity'] ?? '') ?? 5,
+            'downlinkCapacity': int.tryParse(p['downlinkCapacity'] ?? '') ?? 20,
+            'congestion': p['congestion'] == 'true',
+            'readBufferSize': int.tryParse(p['readBufferSize'] ?? '') ?? 2,
+            'writeBufferSize': int.tryParse(p['writeBufferSize'] ?? '') ?? 2,
+            'header': {'type': p['headerType'] ?? 'none'},
+          },
+        };
+      case 'h2' || 'http':
+        return {
+          'httpSettings': {
+            'host': host?.split(','),
+            'path': path,
           },
         };
       case 'ws':

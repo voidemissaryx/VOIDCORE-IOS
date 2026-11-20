@@ -80,75 +80,53 @@ void main() {
     );
   });
 
-  test('the chain proxy exit: per connection type, only with a chain proxy the type can carry', () {
+  test('legacy Chain exit selections are ignored by VOIDCORE connections', () {
     const device = DeviceSettings(
-      exitNodes: {'worker': ExitNode.chain, 'warp': ExitNode.chain},
+      exitNodes: {
+        'worker': ExitNode.chain,
+        'warp': ExitNode.chain,
+        'masque': ExitNode.chain,
+      },
     );
-    // No chain proxies: the worker is the exit.
-    expect(
-      XrayConfigBuilder.exitFor(ConnectionMode.worker, device, const []),
-      ExitNode.worker,
-    );
-    expect(
-      XrayConfigBuilder.exitFor(ConnectionMode.worker, device, const [vless]),
-      ExitNode.chain,
-    );
-    // WireGuard is UDP: the worker can't carry it, WARP can.
-    expect(
-      XrayConfigBuilder.exitFor(ConnectionMode.worker, device, const [wg]),
-      ExitNode.worker,
-    );
-    expect(
-      XrayConfigBuilder.exitFor(ConnectionMode.warp, device, const [wg]),
-      ExitNode.chain,
-    );
-    // The exit chosen for another type doesn't apply.
-    expect(
-      XrayConfigBuilder.exitFor(ConnectionMode.masque, device, const [vless]),
-      ExitNode.worker,
-    );
-    // The chain chosen for the type, else the first one it can carry.
+    for (final mode in [
+      ConnectionMode.worker,
+      ConnectionMode.warp,
+      ConnectionMode.masque,
+    ]) {
+      expect(
+        XrayConfigBuilder.exitFor(mode, device, const [vless, wg]),
+        ExitNode.worker,
+        reason: mode.name,
+      );
+    }
+
+    // Chain profiles remain selectable inside the standalone V2Ray workspace.
     const chosen = DeviceSettings(exitChains: {'warp': 'b2'});
     expect(
-      XrayConfigBuilder.chainFor(ConnectionMode.warp, chosen, const [
-        vless,
-        wg,
-      ]),
+      XrayConfigBuilder.chainFor(ConnectionMode.warp, chosen, const [vless, wg]),
       wg,
     );
     expect(
-      XrayConfigBuilder.chainFor(ConnectionMode.worker, chosen, const [
-        wg,
-        vless,
-      ]),
+      XrayConfigBuilder.chainFor(ConnectionMode.worker, chosen, const [wg, vless]),
       vless,
     );
     expect(
-      XrayConfigBuilder.chainFor(ConnectionMode.masque, chosen, const [
-        vless,
-        wg,
-      ]),
+      XrayConfigBuilder.chainFor(ConnectionMode.masque, chosen, const [vless, wg]),
       vless,
     );
-    // Stored and read back; unknown exit nodes are dropped.
-    final stored = DeviceSettings.fromJson(
-      DeviceSettings.fromJson({
-        'exit': {
-          'nodes': {'warp': 'chain', 'tor': 'mars'},
-          'chains': {'warp': 'b2'},
-        },
-      }).toJson(),
-    );
+
+    // Legacy preferences remain readable for migration, but do not become active exits.
+    final stored = DeviceSettings.fromJson({
+      'exit': {
+        'nodes': {'warp': 'chain', 'tor': 'mars'},
+        'chains': {'warp': 'b2'},
+      },
+    });
+    expect(stored.exitNodes, {'warp': ExitNode.chain});
+    expect(stored.exitChains, {'warp': 'b2'});
     expect(
-      [stored.exitNodes, stored.exitChains],
-      [
-        {'warp': ExitNode.chain},
-        {'warp': 'b2'},
-      ],
-    );
-    expect(
-      [stored.exitNodeFor('warp'), stored.exitNodeFor('worker')],
-      [ExitNode.chain, ExitNode.worker],
+      XrayConfigBuilder.exitFor(ConnectionMode.warp, stored, const [vless, wg]),
+      ExitNode.worker,
     );
   });
 
