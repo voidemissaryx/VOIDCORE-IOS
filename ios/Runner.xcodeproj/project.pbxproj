@@ -80,7 +80,7 @@
 			isa = PBXGroup;
 			children = (
 				A00000000685F252A6BEAC73 /* AppDelegate.swift */,
-				${fileId} /* GeneratedPluginRegistrant.m */,
+				B30000000000000000000002 /* GeneratedPluginRegistrant.m */,
 				A00000005656651A9FD4F289 /* VpnController.swift */,
 				A00000003A56E730F04F46E7 /* VpnConfig.swift */,
 				A0000000570A7DC9094EDAE2 /* SharedContainer.swift */,
@@ -240,7 +240,7 @@
 				A00000000BAB8D0FD2C5E57F /* KeychainStore.swift in Sources */,
 				A000000067C48C1B326E8A2B /* DocumentPicker.swift in Sources */,
 				A0000000607330DE23ECF6F1 /* DocumentSaver.swift in Sources */,
-				${buildId} /* GeneratedPluginRegistrant.m in Sources */,
+				B30000000000000000000001 /* GeneratedPluginRegistrant.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
