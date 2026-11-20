@@ -13,6 +13,7 @@
 import NetworkExtension
 import os.log
 import Foundation
+import Darwin
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
 
@@ -27,7 +28,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     // MARK: - State
 
     private let log = OSLog(subsystem: "com.bpb.voidcore", category: "tunnel")
-    private let controller = XrayController()
+    private let controller = XrayRuntimeController()
+    private var packetSocketFD: Int32 = -1
+    private var packetReadSource: DispatchSourceRead?
     private var pendingStart: VpnConfig?
     private var stopRequested = false
 
@@ -150,30 +153,64 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     // MARK: - Xray start
 
     private func startXray(config: VpnConfig, completionHandler: @escaping (Error?) -> Void) {
-        guard controller.isRunning == false else {
+        guard !controller.isRunning else {
             completionHandler(nil)
             return
         }
+        guard XrayCoreBridge.shared.isLinked else {
+            let error = XrayError.notLinked
+            publishState(.disconnected, error: error.localizedDescription, detail: nil)
+            completionHandler(error)
+            return
+        }
 
-        // Point Xray at the shared asset dir so it can find geoip.dat / geosite.dat.
         XrayCoreBridge.shared.initEnv(assetDir: SharedContainer.url.path)
 
-        // Packet flow read loop. NEPacketTunnelProvider exposes a single flow;
-        // we read packets and feed them to Xray via the TUN file descriptor
-        // the framework opens through `xray.tun.fd` (set by the framework
-        // when NEPacketTunnelProvider's packetFlow is registered).
-        //
-        // The gomobile bind for iOS exposes the packet flow as a tunFd of 0
-        // when running in proxy-only mode; for full-tunnel mode the framework
-        // uses the `packetFlow` we hold. We pass tunFd = 0 because iOS
-        // NEPacketTunnelProvider does not expose a raw fd the way Android's
-        // VpnService does — instead, Xray reads from packetFlow through a
-        // small Swift<->Go bridge we wire below.
         do {
-            // tunFd = 0: Xray runs in proxy mode and we pump packets manually.
-            // The PacketFlowPump (below) wires NEPacketTunnelProvider's
-            // packetFlow into Xray's expected fd.
-            try controller.start(config: config.config, tunFd: 0)
+            if config.proxyOnly {
+                // Proxy-only mode has no TUN inbound. The Go bridge leaves
+                // xray.tun.fd unset when tunFd is zero.
+                try controller.start(config: config.config, tunFd: 0)
+            } else {
+                // NetworkExtension owns the utun and exposes packetFlow rather
+                // than its fd. A datagram socketpair preserves packet boundaries
+                // and the 4-byte utun family header expected by Xray on Darwin.
+                var descriptors: [Int32] = [0, 0]
+                guard socketpair(AF_UNIX, SOCK_DGRAM, 0, &descriptors) == 0 else {
+                    let code = errno
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(code), userInfo: [
+                        NSLocalizedDescriptionKey: "Could not create the iOS packet bridge: \(String(cString: strerror(code)))"
+                    ])
+                }
+
+                var socketBuffer: Int32 = 1_048_576
+                for fd in descriptors {
+                    _ = setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &socketBuffer, socklen_t(MemoryLayout<Int32>.size))
+                    _ = setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &socketBuffer, socklen_t(MemoryLayout<Int32>.size))
+                }
+
+                let flags = fcntl(descriptors[0], F_GETFL, 0)
+                if flags < 0 || fcntl(descriptors[0], F_SETFL, flags | O_NONBLOCK) < 0 {
+                    let code = errno
+                    Darwin.close(descriptors[0])
+                    Darwin.close(descriptors[1])
+                    throw NSError(domain: NSPOSIXErrorDomain, code: Int(code), userInfo: [
+                        NSLocalizedDescriptionKey: "Could not configure the iOS packet bridge: \(String(cString: strerror(code)))"
+                    ])
+                }
+
+                do {
+                    // Xray's Darwin TUN duplicates descriptors[1] before use.
+                    try controller.start(config: config.config, tunFd: descriptors[1])
+                    Darwin.close(descriptors[1])
+                    packetSocketFD = descriptors[0]
+                    startPacketPump()
+                } catch {
+                    Darwin.close(descriptors[0])
+                    Darwin.close(descriptors[1])
+                    throw error
+                }
+            }
         } catch {
             os_log("Xray start failed: %{public}@", log: log, type: .error, error.localizedDescription)
             publishState(.disconnected, error: error.localizedDescription, detail: nil)
@@ -181,12 +218,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
 
-        // Pump packets between the tunnel's packetFlow and Xray. iOS does not
-        // hand us a file descriptor the way Android does, so we use the
-        // NSP-provided readPackets/writePackets API.
-        startPacketPump()
-
-        // Optional verification: HTTP 204 through the tunnel before declaring connected.
         if config.verifyConnection {
             verifyConnection { [weak self] ok in
                 guard let self = self else { return }
@@ -195,10 +226,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                     self.startTrafficTimer()
                     completionHandler(nil)
                 } else {
-                    let msg = "Connection verification failed: the tunnel came up but the HTTP probe through it timed out."
-                    self.publishState(.disconnected, error: msg, detail: nil)
+                    let message = "Connection verification failed: the tunnel came up but the HTTP probe timed out."
+                    self.publishState(.disconnected, error: message, detail: nil)
                     self.stopXray()
-                    completionHandler(NSError(domain: "VoidCore", code: 4, userInfo: [NSLocalizedDescriptionKey: msg]))
+                    completionHandler(NSError(domain: "VoidCore", code: 4, userInfo: [NSLocalizedDescriptionKey: message]))
                 }
             }
         } else {
@@ -209,6 +240,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func stopXray() {
+        trafficTimer?.cancel()
+        trafficTimer = nil
+
+        if let source = packetReadSource {
+            packetReadSource = nil
+            packetSocketFD = -1
+            source.cancel()
+        } else if packetSocketFD >= 0 {
+            Darwin.close(packetSocketFD)
+            packetSocketFD = -1
+        }
+
         do {
             try controller.stop()
         } catch {
@@ -218,30 +261,83 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // MARK: - Packet pump
 
-    /// Reads packets from `packetFlow` and writes them to Xray, and vice-versa.
-    /// The exact fd wiring depends on the gomobile binding's iOS variant; the
-    /// pump runs whether or not the framework is linked, so the structure is
-    /// correct even before the binary is dropped in.
+    /// Bridges NetworkExtension's packetFlow to Xray's Darwin TUN socket.
     private func startPacketPump() {
-        let flow = packetFlow
-        workQueue.async { [weak self] in
-            // Xray's iOS binding reads from packetFlow through a callback we
-            // register. The framework's `XrayStart` for iOS wires a dispatch
-            // source on this flow; here we drive the read loop manually as a
-            // fallback for proxy-only mode where Xray does not own the TUN.
-            flow.readPackets { [weak self] packets, protocols in
-                guard let self = self, !packets.isEmpty else { return }
-                // Forward to Xray's inbound. The framework exposes this via
-                // XrayWritePackets; if it's not linked we just drop the
-                // packets (the tunnel still reports "connected" for UI
-                // purposes, but data won't flow until the framework is linked).
-                _ = packets
-                _ = protocols
-                if self.controller.isRunning {
-                    // In proxy-only mode the pump is a no-op: Xray listens on
-                    // its SOCKS port and apps connect to it explicitly.
-                    self.startPacketPump()
+        guard packetSocketFD >= 0 else { return }
+        let fd = packetSocketFD
+        let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: workQueue)
+        source.setEventHandler { [weak self] in
+            guard let self = self, !self.stopRequested else { return }
+            self.drainXrayPackets(from: fd)
+        }
+        source.setCancelHandler {
+            Darwin.close(fd)
+        }
+        packetReadSource = source
+        source.resume()
+        readPacketFlow()
+    }
+
+    /// Reads framed packets from Xray. Darwin's utun header is four bytes,
+    /// with the address family in the final byte.
+    private func drainXrayPackets(from fd: Int32) {
+        var buffer = [UInt8](repeating: 0, count: 65_540)
+        while !stopRequested {
+            let count = buffer.withUnsafeMutableBytes { rawBuffer -> Int in
+                guard let base = rawBuffer.baseAddress else { return -1 }
+                return recv(fd, base, rawBuffer.count, 0)
+            }
+            if count < 0 {
+                if errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR { return }
+                os_log("Packet bridge read failed: %{public}d", log: log, type: .error, errno)
+                return
+            }
+            if count == 0 { return }
+            guard count > 4 else { continue }
+            let family = Int32(buffer[3])
+            guard family == AF_INET || family == AF_INET6 else { continue }
+            let packet = Data(buffer[4..<count])
+            if !packetFlow.writePackets([packet], withProtocols: [NSNumber(value: family)]) {
+                os_log("NetworkExtension rejected an Xray packet", log: log, type: .error)
+            }
+        }
+    }
+
+    /// Reads the next batch from NetworkExtension and forwards each packet to
+    /// Xray with the Darwin utun address-family header.
+    private func readPacketFlow() {
+        guard !stopRequested, packetSocketFD >= 0 else { return }
+        packetFlow.readPackets { [weak self] packets, protocols in
+            guard let self = self else { return }
+            self.workQueue.async {
+                guard !self.stopRequested, self.packetSocketFD >= 0 else { return }
+                let fd = self.packetSocketFD
+                for (index, packet) in packets.enumerated() {
+                    guard let first = packet.first else { continue }
+                    let version = first >> 4
+                    let requested = index < protocols.count ? protocols[index].int32Value : 0
+                    let family: Int32
+                    if requested == AF_INET6 || version == 6 {
+                        family = AF_INET6
+                    } else if requested == AF_INET || version == 4 {
+                        family = AF_INET
+                    } else {
+                        continue
+                    }
+
+                    var frame = Data([0, 0, 0, UInt8(family)])
+                    frame.append(packet)
+                    let sent = frame.withUnsafeBytes { rawBuffer -> Int in
+                        guard let base = rawBuffer.baseAddress else { return -1 }
+                        return send(fd, base, rawBuffer.count, 0)
+                    }
+                    if sent != frame.count {
+                        let code = errno
+                        os_log("Packet bridge write failed: %{public}@", log: self.log, type: .error,
+                               String(cString: strerror(code)))
+                    }
                 }
+                self.readPacketFlow()
             }
         }
     }

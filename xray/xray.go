@@ -274,7 +274,13 @@ func (c *Controller) Start(config string, tunFd int32) error {
 			releaseCore()
 		}
 	}()
-	os.Setenv(envTunFd, strconv.Itoa(int(tunFd)))
+	if tunFd > 0 {
+		os.Setenv(envTunFd, strconv.Itoa(int(tunFd)))
+	} else {
+		// No TUN is used in proxy-only mode. Setting "0" makes Darwin's
+		// TUN implementation try to duplicate stdin as a tunnel descriptor.
+		os.Unsetenv(envTunFd)
+	}
 
 	parsed, err := serial.LoadJSONConfig(strings.NewReader(config))
 	if err != nil {
